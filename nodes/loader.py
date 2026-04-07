@@ -14,13 +14,17 @@ folder_paths.add_model_folder_path(
 def _list_model_dirs():
     """List VoxCPM model directories that contain config.json."""
     base_dirs = folder_paths.get_folder_paths(VOXCPM_MODEL_TYPE)
+    seen = set()
     results = []
     for base in base_dirs:
         if not os.path.isdir(base):
             continue
         for name in sorted(os.listdir(base)):
+            if name in seen:
+                continue
             full = os.path.join(base, name)
             if os.path.isdir(full) and os.path.isfile(os.path.join(full, "config.json")):
+                seen.add(name)
                 results.append(name)
     return results if results else ["None"]
 
@@ -44,8 +48,7 @@ class VoxCPMLoadModel:
         return {
             "required": {
                 "model_name": (_list_model_dirs(),),
-                "enable_denoiser": ("BOOLEAN", {"default": False}),
-                "optimize": ("BOOLEAN", {"default": True}),
+                "optimize": ("BOOLEAN", {"default": False}),
             },
         }
 
@@ -54,17 +57,15 @@ class VoxCPMLoadModel:
     FUNCTION = "load_model"
     CATEGORY = "audio/voxcpm"
 
-    def load_model(self, model_name, enable_denoiser, optimize):
+    def load_model(self, model_name, optimize):
         from voxcpm import VoxCPM
 
         model_path = _resolve_model_path(model_name)
 
-        zipenhancer_path = "iic/speech_zipenhancer_ans_multiloss_16k_base" if enable_denoiser else None
-
         model = VoxCPM(
             voxcpm_model_path=model_path,
-            zipenhancer_model_path=zipenhancer_path,
-            enable_denoiser=enable_denoiser,
+            zipenhancer_model_path=None,
+            enable_denoiser=False,
             optimize=optimize,
         )
 

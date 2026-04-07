@@ -5,6 +5,91 @@ import torch
 import torchaudio
 import folder_paths
 
+SENSEVOICE_MODEL_TYPE = "SenseVoice"
+folder_paths.add_model_folder_path(
+    SENSEVOICE_MODEL_TYPE,
+    os.path.join(folder_paths.models_dir, SENSEVOICE_MODEL_TYPE),
+)
+
+VOXCPM_MODEL_TYPE = "voxcpm"
+ZIPENHANCER_DIR_NAME = "speech_zipenhancer_ans_multiloss_16k_base"
+
+_asr_model = None
+_denoiser = None
+
+
+def _get_asr_model():
+    global _asr_model
+    if _asr_model is not None:
+        return _asr_model
+
+    from funasr import AutoModel
+
+    base_dirs = folder_paths.get_folder_paths(SENSEVOICE_MODEL_TYPE)
+    model_path = None
+    for base in base_dirs:
+        candidate = os.path.join(base, "SenseVoiceSmall")
+        if os.path.isdir(candidate):
+            model_path = candidate
+            break
+
+    if model_path is None:
+        raise FileNotFoundError(
+            f"SenseVoiceSmall model not found. "
+            f"Please place it under: models/SenseVoice/SenseVoiceSmall/"
+        )
+
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    _asr_model = AutoModel(
+        model=model_path,
+        disable_update=True,
+        device=device,
+    )
+    return _asr_model
+
+
+def _recognize_audio(wav_path):
+    """Run ASR on audio file, return recognized text."""
+    asr = _get_asr_model()
+    res = asr.generate(input=wav_path, language="auto", use_itn=True)
+    return res[0]["text"].split("|>")[-1]
+
+
+def _get_denoiser():
+    global _denoiser
+    if _denoiser is not None:
+        return _denoiser
+
+    from voxcpm.zipenhancer import ZipEnhancer
+
+    base_dirs = folder_paths.get_folder_paths(VOXCPM_MODEL_TYPE)
+    model_path = None
+    for base in base_dirs:
+        candidate = os.path.join(base, ZIPENHANCER_DIR_NAME)
+        if os.path.isdir(candidate):
+            model_path = candidate
+            break
+
+    if model_path is None:
+        expected = os.path.join(folder_paths.models_dir, VOXCPM_MODEL_TYPE, ZIPENHANCER_DIR_NAME)
+        raise FileNotFoundError(
+            f"ZipEnhancer model not found. "
+            f"Please download from ModelScope 'iic/speech_zipenhancer_ans_multiloss_16k_base' "
+            f"and place it at: {expected}"
+        )
+
+    _denoiser = ZipEnhancer(model_path)
+    return _denoiser
+
+
+def _denoise_audio(input_path):
+    """Denoise audio file, return path to denoised file."""
+    denoiser = _get_denoiser()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    tmp.close()
+    denoiser.enhance(input_path, output_path=tmp.name)
+    return tmp.name
+
 
 class VoxCPMGenerate:
     @classmethod
@@ -12,6 +97,10 @@ class VoxCPMGenerate:
         return {
             "required": {
                 "model": ("VOXCPM_MODEL",),
+                "control_instruction": ("STRING", {
+                    "default": "",
+                    "multiline": True,
+                }),
                 "text": ("STRING", {
                     "default": "Hello, this is a test.",
                     "multiline": True,
@@ -28,14 +117,16 @@ class VoxCPMGenerate:
                     "max": 50,
                     "step": 1,
                 }),
+                "seed": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 0xffffffffffffffff,
+                }),
             },
             "optional": {
-                "control_instruction": ("STRING", {
-                    "default": "",
-                    "multiline": True,
-                }),
                 "reference_audio": ("AUDIO",),
-                "prompt_text": ("STRING", {
+                "ultimate_clone": ("BOOLEAN", {"default": False}),
+                "reference_audio_text": ("STRING", {
                     "default": "",
                     "multiline": True,
                 }),
@@ -52,15 +143,21 @@ class VoxCPMGenerate:
     def generate(
         self,
         model,
+        control_instruction,
         text,
         cfg_value,
         inference_steps,
-        control_instruction="",
+        seed,
         reference_audio=None,
-        prompt_text="",
+        ultimate_clone=False,
+        reference_audio_text="",
         normalize_text=False,
         denoise_reference=False,
     ):
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
         voxcpm_model = model["model"]
         sample_rate = model["sample_rate"]
         is_v2 = model["architecture"] == "voxcpm2"
@@ -70,12 +167,18 @@ class VoxCPMGenerate:
             raise ValueError("Target text must not be empty.")
 
         control = (control_instruction or "").strip()
-        prompt_text_clean = (prompt_text or "").strip() or None
 
-        if control and not prompt_text_clean:
-            final_text = f"({control}){text}"
-        else:
+        # ultimate_clone=ON  → 极致克隆：用 prompt_text 做音频续写，control_instruction 被忽略
+        # ultimate_clone=OFF → 声音设计 / 可控克隆：control_instruction 拼入文本
+        if ultimate_clone:
+            ref_text = (reference_audio_text or "").strip() or None
             final_text = text
+        else:
+            ref_text = None
+            if control:
+                final_text = f"({control}){text}"
+            else:
+                final_text = text
 
         ref_wav_path = None
         temp_files = []
@@ -96,25 +199,39 @@ class VoxCPMGenerate:
                 torchaudio.save(tmp.name, waveform.cpu(), sr)
                 ref_wav_path = tmp.name
 
+                if denoise_reference:
+                    print("[VoxCPM] Denoising reference audio...")
+                    denoised_path = _denoise_audio(ref_wav_path)
+                    temp_files.append(denoised_path)
+                    ref_wav_path = denoised_path
+
+                if ultimate_clone and ref_text is None:
+                    print("[VoxCPM] Ultimate clone: reference_audio_text is empty, running ASR...")
+                    ref_text = _recognize_audio(ref_wav_path)
+                    print(f"[VoxCPM] ASR result: {ref_text[:80]}...")
+
             generate_kwargs = {
                 "text": final_text,
                 "cfg_value": float(cfg_value),
                 "inference_timesteps": int(inference_steps),
                 "normalize": normalize_text,
-                "denoise": denoise_reference,
+                "denoise": False,
             }
 
             if ref_wav_path is not None:
-                if prompt_text_clean and is_v2:
+                if ultimate_clone and ref_text and is_v2:
+                    # 极致克隆：prompt_wav + prompt_text + reference_wav
                     generate_kwargs["prompt_wav_path"] = ref_wav_path
-                    generate_kwargs["prompt_text"] = prompt_text_clean
+                    generate_kwargs["prompt_text"] = ref_text
                     generate_kwargs["reference_wav_path"] = ref_wav_path
                 elif is_v2:
+                    # 可控克隆：仅 reference_wav（音色参考）
                     generate_kwargs["reference_wav_path"] = ref_wav_path
                 else:
-                    if prompt_text_clean:
+                    # VoxCPM v1：只支持 prompt 模式
+                    if ultimate_clone and ref_text:
                         generate_kwargs["prompt_wav_path"] = ref_wav_path
-                        generate_kwargs["prompt_text"] = prompt_text_clean
+                        generate_kwargs["prompt_text"] = ref_text
 
             wav_np = voxcpm_model.generate(**generate_kwargs)
 
