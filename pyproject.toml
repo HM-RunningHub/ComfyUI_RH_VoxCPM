@@ -1,0 +1,9 @@
+[project]
+name = "comfyui-rh-voxcpm"
+version = "1.0.0"
+description = "ComfyUI custom nodes for VoxCPM - Tokenizer-Free TTS for Voice Design and Cloning"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+
+[project.urls]
+Repository = "https://github.com/OpenBMB/VoxCPM"

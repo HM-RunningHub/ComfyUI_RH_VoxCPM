@@ -1,0 +1,11 @@
+voxcpm
+soundfile
+librosa
+wetext
+modelscope>=1.22.0
+funasr
+inflect
+addict
+simplejson
+sortedcontainers
+pydantic
