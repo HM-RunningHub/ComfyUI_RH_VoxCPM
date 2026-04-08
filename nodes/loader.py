@@ -1,14 +1,27 @@
-import os
-import sys
+import gc
 import json
+import logging
+import os
+
 import torch
 import folder_paths
 
+logger = logging.getLogger("RunningHub.VoxCPM")
+
 VOXCPM_MODEL_TYPE = "voxcpm"
+LORA_MODEL_TYPE = "voxcpm_lora"
+
 folder_paths.add_model_folder_path(
     VOXCPM_MODEL_TYPE,
     os.path.join(folder_paths.models_dir, VOXCPM_MODEL_TYPE),
 )
+folder_paths.add_model_folder_path(
+    LORA_MODEL_TYPE,
+    os.path.join(folder_paths.models_dir, VOXCPM_MODEL_TYPE, "loras"),
+)
+
+_cached_pipe = None
+_cached_config_hash = None
 
 
 def _list_model_dirs():
@@ -26,7 +39,33 @@ def _list_model_dirs():
             if os.path.isdir(full) and os.path.isfile(os.path.join(full, "config.json")):
                 seen.add(name)
                 results.append(name)
-    return results if results else ["None"]
+    if not results:
+        return ["None"]
+    preferred = "VoxCPM2"
+    if preferred in results:
+        results.remove(preferred)
+        results.insert(0, preferred)
+    return results
+
+
+def _list_lora_files():
+    """List LoRA weight files (.pth, .ckpt) and directories."""
+    base_dirs = folder_paths.get_folder_paths(LORA_MODEL_TYPE)
+    seen = set()
+    results = ["None"]
+    for base in base_dirs:
+        if not os.path.isdir(base):
+            continue
+        for name in sorted(os.listdir(base)):
+            if name in seen:
+                continue
+            full = os.path.join(base, name)
+            is_weight_file = os.path.isfile(full) and name.endswith((".pth", ".ckpt", ".safetensors"))
+            is_weight_dir = os.path.isdir(full) and os.path.isfile(os.path.join(full, "lora_weights.ckpt"))
+            if is_weight_file or is_weight_dir:
+                seen.add(name)
+                results.append(name)
+    return results
 
 
 def _resolve_model_path(model_name):
@@ -42,7 +81,70 @@ def _resolve_model_path(model_name):
     )
 
 
-class VoxCPMLoadModel:
+def _resolve_lora_path(lora_name):
+    """Resolve LoRA name to full path. Returns None if 'None'."""
+    if not lora_name or lora_name == "None":
+        return None
+    base_dirs = folder_paths.get_folder_paths(LORA_MODEL_TYPE)
+    for base in base_dirs:
+        full = os.path.join(base, lora_name)
+        if os.path.isfile(full) or os.path.isdir(full):
+            return full
+    raise FileNotFoundError(
+        f"VoxCPM LoRA '{lora_name}' not found. "
+        f"Please place LoRA weights under: models/voxcpm/loras/"
+    )
+
+
+def _load_pipeline(model_name, optimize, lora_name="None"):
+    global _cached_pipe, _cached_config_hash
+    config_hash = hash((model_name, optimize, lora_name))
+
+    if _cached_pipe is not None and config_hash == _cached_config_hash:
+        logger.info("Reusing cached VoxCPM pipeline (model=%s, optimize=%s, lora=%s)", model_name, optimize, lora_name)
+        return _cached_pipe
+
+    if _cached_pipe is not None:
+        logger.info("Config changed, releasing old pipeline")
+        del _cached_pipe
+        _cached_pipe = None
+        _cached_config_hash = None
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    from voxcpm import VoxCPM
+
+    model_path = _resolve_model_path(model_name)
+    lora_path = _resolve_lora_path(lora_name)
+
+    logger.info("Loading VoxCPM from %s (optimize=%s, lora=%s)", model_path, optimize, lora_path)
+
+    model = VoxCPM(
+        voxcpm_model_path=model_path,
+        zipenhancer_model_path=None,
+        enable_denoiser=False,
+        optimize=optimize,
+        lora_weights_path=lora_path,
+    )
+
+    config_path = os.path.join(model_path, "config.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    arch = config.get("architecture", "voxcpm").lower()
+
+    model_info = {
+        "model": model,
+        "sample_rate": model.tts_model.sample_rate,
+        "architecture": arch,
+        "model_path": model_path,
+    }
+
+    _cached_pipe = model_info
+    _cached_config_hash = config_hash
+    return model_info
+
+
+class RunningHubVoxCPMLoadModel:
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -50,35 +152,16 @@ class VoxCPMLoadModel:
                 "model_name": (_list_model_dirs(),),
                 "optimize": ("BOOLEAN", {"default": False}),
             },
+            "optional": {
+                "lora_name": (_list_lora_files(),),
+            },
         }
 
     RETURN_TYPES = ("VOXCPM_MODEL",)
     RETURN_NAMES = ("model",)
     FUNCTION = "load_model"
-    CATEGORY = "audio/voxcpm"
+    CATEGORY = "RunningHub/VoxCPM"
 
-    def load_model(self, model_name, optimize):
-        from voxcpm import VoxCPM
-
-        model_path = _resolve_model_path(model_name)
-
-        model = VoxCPM(
-            voxcpm_model_path=model_path,
-            zipenhancer_model_path=None,
-            enable_denoiser=False,
-            optimize=optimize,
-        )
-
-        config_path = os.path.join(model_path, "config.json")
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-        arch = config.get("architecture", "voxcpm").lower()
-
-        model_info = {
-            "model": model,
-            "sample_rate": model.tts_model.sample_rate,
-            "architecture": arch,
-            "model_path": model_path,
-        }
-
+    def load_model(self, model_name, optimize, lora_name="None"):
+        model_info = _load_pipeline(model_name, optimize, lora_name)
         return (model_info,)

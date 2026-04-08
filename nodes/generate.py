@@ -1,9 +1,13 @@
+import logging
 import os
 import tempfile
-import numpy as np
+
 import torch
 import torchaudio
 import folder_paths
+import comfy.utils
+
+logger = logging.getLogger("RunningHub.VoxCPM")
 
 SENSEVOICE_MODEL_TYPE = "SenseVoice"
 folder_paths.add_model_folder_path(
@@ -35,8 +39,8 @@ def _get_asr_model():
 
     if model_path is None:
         raise FileNotFoundError(
-            f"SenseVoiceSmall model not found. "
-            f"Please place it under: models/SenseVoice/SenseVoiceSmall/"
+            "SenseVoiceSmall model not found. "
+            "Please place it under: models/SenseVoice/SenseVoiceSmall/"
         )
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -91,7 +95,7 @@ def _denoise_audio(input_path):
     return tmp.name
 
 
-class VoxCPMGenerate:
+class RunningHubVoxCPMGenerate:
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -132,13 +136,20 @@ class VoxCPMGenerate:
                 }),
                 "normalize_text": ("BOOLEAN", {"default": False}),
                 "denoise_reference": ("BOOLEAN", {"default": False}),
+                "max_len": ("INT", {
+                    "default": 4096,
+                    "min": 64,
+                    "max": 8192,
+                    "step": 64,
+                }),
+                "retry_badcase": ("BOOLEAN", {"default": True}),
             },
         }
 
     RETURN_TYPES = ("AUDIO",)
     RETURN_NAMES = ("audio",)
     FUNCTION = "generate"
-    CATEGORY = "audio/voxcpm"
+    CATEGORY = "RunningHub/VoxCPM"
 
     def generate(
         self,
@@ -153,6 +164,8 @@ class VoxCPMGenerate:
         reference_audio_text="",
         normalize_text=False,
         denoise_reference=False,
+        max_len=4096,
+        retry_badcase=True,
     ):
         torch.manual_seed(seed)
         if torch.cuda.is_available():
@@ -200,15 +213,18 @@ class VoxCPMGenerate:
                 ref_wav_path = tmp.name
 
                 if denoise_reference:
-                    print("[VoxCPM] Denoising reference audio...")
+                    logger.info("Denoising reference audio...")
                     denoised_path = _denoise_audio(ref_wav_path)
                     temp_files.append(denoised_path)
                     ref_wav_path = denoised_path
 
                 if ultimate_clone and ref_text is None:
-                    print("[VoxCPM] Ultimate clone: reference_audio_text is empty, running ASR...")
+                    logger.info("Ultimate clone: reference_audio_text is empty, running ASR...")
                     ref_text = _recognize_audio(ref_wav_path)
-                    print(f"[VoxCPM] ASR result: {ref_text[:80]}...")
+                    logger.info("ASR result: %s...", ref_text[:80])
+
+            total_steps = int(inference_steps) + 2
+            pbar = comfy.utils.ProgressBar(total_steps)
 
             generate_kwargs = {
                 "text": final_text,
@@ -216,24 +232,26 @@ class VoxCPMGenerate:
                 "inference_timesteps": int(inference_steps),
                 "normalize": normalize_text,
                 "denoise": False,
+                "max_len": int(max_len),
+                "retry_badcase": retry_badcase,
             }
 
             if ref_wav_path is not None:
                 if ultimate_clone and ref_text and is_v2:
-                    # 极致克隆：prompt_wav + prompt_text + reference_wav
                     generate_kwargs["prompt_wav_path"] = ref_wav_path
                     generate_kwargs["prompt_text"] = ref_text
                     generate_kwargs["reference_wav_path"] = ref_wav_path
                 elif is_v2:
-                    # 可控克隆：仅 reference_wav（音色参考）
                     generate_kwargs["reference_wav_path"] = ref_wav_path
                 else:
-                    # VoxCPM v1：只支持 prompt 模式
                     if ultimate_clone and ref_text:
                         generate_kwargs["prompt_wav_path"] = ref_wav_path
                         generate_kwargs["prompt_text"] = ref_text
 
+            pbar.update(1)
+
             wav_np = voxcpm_model.generate(**generate_kwargs)
+            pbar.update_absolute(total_steps - 1, total_steps)
 
             wav_tensor = torch.from_numpy(wav_np).float().unsqueeze(0).unsqueeze(0)
 
@@ -242,6 +260,7 @@ class VoxCPMGenerate:
                 "sample_rate": sample_rate,
             }
 
+            pbar.update_absolute(total_steps, total_steps)
             return (audio_output,)
 
         finally:

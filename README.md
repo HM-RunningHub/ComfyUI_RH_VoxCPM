@@ -1,5 +1,7 @@
 # ComfyUI_RH_VoxCPM
 
+[中文说明](README_zh.md)
+
 ComfyUI custom nodes for [VoxCPM](https://github.com/OpenBMB/VoxCPM) — Tokenizer-Free TTS for Context-Aware Speech Generation and True-to-Life Voice Cloning.
 
 Run this node online: [RunningHub (CN)](https://www.runninghub.cn/?inviteCode=rh-v1367) | [RunningHub (Global)](https://www.runninghub.ai/?inviteCode=rh-v1367)
@@ -9,21 +11,23 @@ Run this node online: [RunningHub (CN)](https://www.runninghub.cn/?inviteCode=rh
 - **Voice Design**: Create unique voices from text descriptions (gender, age, tone, emotion, pace)
 - **Controllable Cloning**: Clone a voice with optional style guidance via reference audio
 - **Ultimate Cloning**: Reproduce every vocal nuance through audio continuation (VoxCPM2 only)
+- **LoRA Fine-tuning**: Load custom LoRA weights for personalized voice generation
 - **Auto ASR**: Automatically recognize reference audio text via FunASR SenseVoiceSmall when `reference_audio_text` is empty
 - **Reference Denoising**: Optional ZipEnhancer denoising for reference audio before cloning
 
 ## Nodes
 
-### VoxCPM: Load Model
+### RunningHub VoxCPM Load Model
 
-Load VoxCPM/VoxCPM2 model from local directory.
+Load VoxCPM/VoxCPM2 model from local directory with optional LoRA weights.
 
 | Input | Type | Description |
 |-------|------|-------------|
 | model_name | COMBO | Model directory under `models/voxcpm/` |
 | optimize | BOOLEAN | Enable torch.compile optimization (default: off) |
+| lora_name | COMBO | LoRA weights under `models/voxcpm/loras/` (optional, default: None) |
 
-### VoxCPM: Generate Speech
+### RunningHub VoxCPM Generate Speech
 
 Generate speech with voice design, controllable cloning, or ultimate cloning.
 
@@ -40,6 +44,8 @@ Generate speech with voice design, controllable cloning, or ultimate cloning.
 | reference_audio_text | STRING | Transcript of reference audio; auto ASR if empty (optional) |
 | normalize_text | BOOLEAN | Text normalization (default: off) |
 | denoise_reference | BOOLEAN | Denoise reference audio via ZipEnhancer (default: off) |
+| max_len | INT | Maximum token length during generation (default: 4096) |
+| retry_badcase | BOOLEAN | Auto-retry when output quality is poor (default: on) |
 
 ## Model Setup
 
@@ -62,6 +68,17 @@ ComfyUI/models/voxcpm/
     tokenizer.json
     tokenizer_config.json
     special_tokens_map.json
+```
+
+### LoRA Weights (optional)
+
+Place LoRA weight files (`.pth`, `.ckpt`, `.safetensors`) or directories under `ComfyUI/models/voxcpm/loras/`:
+
+```
+ComfyUI/models/voxcpm/loras/
+  my_custom_voice.pth
+  another_lora/
+    lora_weights.ckpt
 ```
 
 ### SenseVoiceSmall (required for auto ASR)
@@ -88,8 +105,8 @@ pip install voxcpm
 
 ## Usage
 
-1. Add **VoxCPM: Load Model** node, select your model directory
-2. Add **VoxCPM: Generate Speech** node, connect the model output
+1. Add **RunningHub VoxCPM Load Model** node, select your model directory (and optionally a LoRA)
+2. Add **RunningHub VoxCPM Generate Speech** node, connect the model output
 3. Enter target text and optionally provide control instruction or reference audio
 4. Connect output to a **Preview Audio** or **Save Audio** node
 
