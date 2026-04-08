@@ -1,5 +1,39 @@
-__pycache__/
-*.pyc
-*.pyo
+# Sensitive files
+config.json
+rh_config.json
 .env
+*.pem
+*.key
+sync.sh
+deploy.sh
+cptorh*.sh
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large files
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+models/
+weights/
+save_audio/
+
+# Logs
+*.log
+*.tmp
+
+# Source / build
 source/
