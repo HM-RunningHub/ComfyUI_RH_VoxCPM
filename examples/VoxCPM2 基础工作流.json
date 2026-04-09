@@ -1,0 +1,378 @@
+{
+  "id": "774b6f97-0fa7-4d71-9f35-f5fa119ae70d",
+  "revision": 0,
+  "last_node_id": 7,
+  "last_link_id": 8,
+  "nodes": [
+    {
+      "id": 6,
+      "type": "RunningHub_VoxCPM_LoadModel",
+      "pos": [
+        48.48459243774414,
+        173.24917602539062
+      ],
+      "size": [
+        313.1402282714844,
+        106
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "model_name",
+          "name": "model_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "model_name"
+          }
+        },
+        {
+          "label": "optimize",
+          "name": "optimize",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "optimize"
+          }
+        },
+        {
+          "label": "lora_name",
+          "name": "lora_name",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "lora_name"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "label": "model",
+          "name": "model",
+          "type": "VOXCPM_MODEL",
+          "links": [
+            7
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RunningHub_VoxCPM_LoadModel",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "VoxCPM2",
+        false,
+        "None"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "SaveAudio",
+      "pos": [
+        933.1569213867188,
+        187.43544006347656
+      ],
+      "size": [
+        270,
+        112
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 8
+        },
+        {
+          "label": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          }
+        },
+        {
+          "label": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          }
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveAudio",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "audio/ComfyUI"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "RunningHub_VoxCPM_Generate",
+      "pos": [
+        459.87725830078125,
+        194.22210693359375
+      ],
+      "size": [
+        400,
+        432
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "model",
+          "name": "model",
+          "type": "VOXCPM_MODEL",
+          "link": 7
+        },
+        {
+          "label": "reference_audio",
+          "name": "reference_audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 5
+        },
+        {
+          "label": "control_instruction",
+          "name": "control_instruction",
+          "type": "STRING",
+          "widget": {
+            "name": "control_instruction"
+          }
+        },
+        {
+          "label": "text",
+          "name": "text",
+          "type": "STRING",
+          "widget": {
+            "name": "text"
+          }
+        },
+        {
+          "label": "cfg_value",
+          "name": "cfg_value",
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg_value"
+          }
+        },
+        {
+          "label": "inference_steps",
+          "name": "inference_steps",
+          "type": "INT",
+          "widget": {
+            "name": "inference_steps"
+          }
+        },
+        {
+          "label": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          }
+        },
+        {
+          "label": "ultimate_clone",
+          "name": "ultimate_clone",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "ultimate_clone"
+          }
+        },
+        {
+          "label": "reference_audio_text",
+          "name": "reference_audio_text",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "reference_audio_text"
+          }
+        },
+        {
+          "label": "normalize_text",
+          "name": "normalize_text",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "normalize_text"
+          }
+        },
+        {
+          "label": "denoise_reference",
+          "name": "denoise_reference",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "denoise_reference"
+          }
+        },
+        {
+          "label": "max_len",
+          "name": "max_len",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "max_len"
+          }
+        },
+        {
+          "label": "retry_badcase",
+          "name": "retry_badcase",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "retry_badcase"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "label": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            8
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RunningHub_VoxCPM_Generate",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "四川话，女性",
+        "T8那个瓜娃子，一天到黑只晓得搞视频，耳都不耳你一下。",
+        2,
+        10,
+        546942015393019,
+        "randomize",
+        true,
+        "",
+        false,
+        false,
+        4096,
+        true
+      ]
+    },
+    {
+      "id": 4,
+      "type": "LoadAudio",
+      "pos": [
+        57.21171188354492,
+        421.02215576171875
+      ],
+      "size": [
+        274.080078125,
+        136
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 4,
+      "inputs": [
+        {
+          "label": "audio",
+          "name": "audio",
+          "type": "COMBO",
+          "widget": {
+            "name": "audio"
+          }
+        },
+        {
+          "label": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          }
+        },
+        {
+          "label": "upload",
+          "name": "upload",
+          "type": "AUDIOUPLOAD",
+          "widget": {
+            "name": "upload"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "label": "AUDIO",
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            5
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadAudio",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "b2c7bc3d3ae824e770440072d5a2e6a77c3576f61b8afee804d99105425da50b.flac",
+        null,
+        null
+      ]
+    }
+  ],
+  "links": [
+    [
+      5,
+      4,
+      0,
+      5,
+      1,
+      "AUDIO"
+    ],
+    [
+      7,
+      6,
+      0,
+      5,
+      0,
+      "VOXCPM_MODEL"
+    ],
+    [
+      8,
+      5,
+      0,
+      7,
+      0,
+      "AUDIO"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "links_added_by_ue": [],
+    "ue_links": [],
+    "0246.VERSION": [
+      0,
+      0,
+      4
+    ],
+    "ds": {
+      "scale": 0.9646149645000006,
+      "offset": [
+        262.06905612424157,
+        3.6909108340253702
+      ]
+    },
+    "frontendVersion": "1.23.0",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}

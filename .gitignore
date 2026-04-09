@@ -1,5 +1,4 @@
 # Sensitive files
-config.json
 .env
 *.pem
 *.key
