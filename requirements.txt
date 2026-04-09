@@ -9,4 +9,3 @@ addict
 simplejson
 sortedcontainers
 pydantic
-torchcodec
