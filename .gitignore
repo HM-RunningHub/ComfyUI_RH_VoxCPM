@@ -1,6 +1,5 @@
 # Sensitive files
 config.json
-rh_config.json
 .env
 *.pem
 *.key
