@@ -93,8 +93,8 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 
 Download example workflows from the [`examples/`](examples/) directory and import into ComfyUI:
 
-1. **[Voice Design](examples/voxcpm_voice_design.json)** — Create a voice from text description
-2. **[Ultimate Clone](examples/voxcpm_ultimate_clone.json)** — Clone a voice from reference audio
+1. **[Basic Workflow](examples/VoxCPM2%20基础工作流.json)** — Single-speaker speech generation with voice design / cloning
+2. **[Multi-Speaker Workflow](examples/VoxCPM2%20多人工作流.json)** — Multi-speaker dialogue generation with per-speaker voice control
 
 ### Three Modes
 
@@ -129,6 +129,24 @@ Generate speech with voice design, controllable cloning, or ultimate cloning.
 | reference_audio | AUDIO | Reference audio for cloning (optional) |
 | ultimate_clone | BOOLEAN | Enable ultimate cloning mode (default: off) |
 | reference_audio_text | STRING | Transcript of reference audio; auto ASR if empty (optional) |
+| normalize_text | BOOLEAN | Text normalization (default: off) |
+| denoise_reference | BOOLEAN | Denoise reference audio via ZipEnhancer (default: off) |
+| max_len | INT | Maximum token length during generation (default: 4096) |
+| retry_badcase | BOOLEAN | Auto-retry when output quality is poor (default: on) |
+
+### RunningHub VoxCPM Multi-Speaker
+
+Generate multi-speaker dialogue from a tagged script. Supports up to 5 speakers with individual voice control.
+
+| Input | Type | Description |
+|-------|------|-------------|
+| model | VOXCPM_MODEL | Model from Load Model node |
+| script | STRING | Tagged script, e.g. `[spk1]Hello[spk2]Hi there` |
+| cfg_value | FLOAT | Guidance scale (default: 2.0) |
+| inference_steps | INT | LocDiT flow-matching steps (default: 10) |
+| seed | INT | Random seed for reproducibility |
+| audio_1 ~ audio_5 | AUDIO | Reference audio for each speaker (optional) |
+| control_1 ~ control_5 | STRING | Voice description for each speaker (optional) |
 | normalize_text | BOOLEAN | Text normalization (default: off) |
 | denoise_reference | BOOLEAN | Denoise reference audio via ZipEnhancer (default: off) |
 | max_len | INT | Maximum token length during generation (default: 4096) |

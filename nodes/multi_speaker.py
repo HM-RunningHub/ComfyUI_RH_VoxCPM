@@ -9,7 +9,7 @@ import torchaudio
 import folder_paths
 import comfy.utils
 
-from .generate import _recognize_audio, _denoise_audio
+from .generate import _recognize_audio, _denoise_audio, _safe_save_wav
 
 logger = logging.getLogger("RunningHub.VoxCPM")
 
@@ -87,7 +87,7 @@ def _save_audio_to_temp(audio_dict):
         waveform = waveform.mean(dim=0, keepdim=True)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
     tmp.close()
-    torchaudio.save(tmp.name, waveform.cpu(), sr)
+    _safe_save_wav(tmp.name, waveform.cpu(), sr)
     return tmp.name
 
 

@@ -4,10 +4,22 @@ import tempfile
 
 import torch
 import torchaudio
+import soundfile as sf
 import folder_paths
 import comfy.utils
 
 logger = logging.getLogger("RunningHub.VoxCPM")
+
+
+def _safe_save_wav(path, waveform, sample_rate):
+    """Save waveform tensor to WAV, falling back to soundfile if torchaudio fails."""
+    try:
+        torchaudio.save(path, waveform, sample_rate)
+    except Exception as e:
+        logger.warning("torchaudio.save failed (%s), falling back to soundfile", e)
+        # soundfile expects (samples, channels) numpy array
+        audio_np = waveform.numpy().T
+        sf.write(path, audio_np, sample_rate)
 
 SENSEVOICE_MODEL_TYPE = "SenseVoice"
 folder_paths.add_model_folder_path(
@@ -209,7 +221,7 @@ class RunningHubVoxCPMGenerate:
                 tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
                 temp_files.append(tmp.name)
                 tmp.close()
-                torchaudio.save(tmp.name, waveform.cpu(), sr)
+                _safe_save_wav(tmp.name, waveform.cpu(), sr)
                 ref_wav_path = tmp.name
 
                 if denoise_reference:

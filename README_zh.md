@@ -93,8 +93,8 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 
 从 [`examples/`](examples/) 目录下载示例工作流并导入 ComfyUI：
 
-1. **[声音设计](examples/voxcpm_voice_design.json)** — 通过文字描述创造声音
-2. **[极致克隆](examples/voxcpm_ultimate_clone.json)** — 从参考音频克隆声音
+1. **[基础工作流](examples/VoxCPM2%20基础工作流.json)** — 单人语音生成，支持声音设计 / 克隆
+2. **[多人工作流](examples/VoxCPM2%20多人工作流.json)** — 多说话人对话生成，每位说话人可独立控制声音
 
 ### 三种模式
 
@@ -129,6 +129,24 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 | reference_audio | AUDIO | 参考音频，用于克隆模式（可选） |
 | ultimate_clone | BOOLEAN | 启用极致克隆模式（默认：关） |
 | reference_audio_text | STRING | 参考音频的文字内容；为空时自动 ASR 识别（可选） |
+| normalize_text | BOOLEAN | 文本规范化（默认：关） |
+| denoise_reference | BOOLEAN | 通过 ZipEnhancer 对参考音频降噪（默认：关） |
+| max_len | INT | 生成时最大 token 长度（默认：4096） |
+| retry_badcase | BOOLEAN | 输出质量差时自动重试（默认：开） |
+
+### RunningHub VoxCPM Multi-Speaker（多人语音）
+
+根据带标签的脚本生成多说话人对话，最多支持 5 位说话人，每人可独立控制声音。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| model | VOXCPM_MODEL | 来自 Load Model 节点的模型 |
+| script | STRING | 带标签的脚本，如 `[spk1]你好[spk2]你好啊` |
+| cfg_value | FLOAT | 引导强度（默认：2.0） |
+| inference_steps | INT | LocDiT 流匹配步数（默认：10） |
+| seed | INT | 随机种子 |
+| audio_1 ~ audio_5 | AUDIO | 各说话人的参考音频（可选） |
+| control_1 ~ control_5 | STRING | 各说话人的声音描述（可选） |
 | normalize_text | BOOLEAN | 文本规范化（默认：关） |
 | denoise_reference | BOOLEAN | 通过 ZipEnhancer 对参考音频降噪（默认：关） |
 | max_len | INT | 生成时最大 token 长度（默认：4096） |
