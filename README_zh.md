@@ -8,6 +8,8 @@
 
 在线使用：[RunningHub 国内版](https://www.runninghub.cn/?inviteCode=rh-v1367) | [RunningHub 国际版](https://www.runninghub.ai/?inviteCode=rh-v1367)
 
+GitHub 仓库地址：[HM-RunningHub/ComfyUI_RH_VoxCPM](https://github.com/HM-RunningHub/ComfyUI_RH_VoxCPM)
+
 ## ✨ 功能特性
 
 - **声音设计**：通过文字描述创造全新声音（性别、年龄、语调、情感、语速）

@@ -8,6 +8,8 @@ ComfyUI custom nodes for [VoxCPM](https://github.com/OpenBMB/VoxCPM) — Tokeniz
 
 Run this node online: [RunningHub (CN)](https://www.runninghub.cn/?inviteCode=rh-v1367) | [RunningHub (Global)](https://www.runninghub.ai/?inviteCode=rh-v1367)
 
+GitHub Repository: [HM-RunningHub/ComfyUI_RH_VoxCPM](https://github.com/HM-RunningHub/ComfyUI_RH_VoxCPM)
+
 ## ✨ Features
 
 - **Voice Design**: Create unique voices from text descriptions (gender, age, tone, emotion, pace)
