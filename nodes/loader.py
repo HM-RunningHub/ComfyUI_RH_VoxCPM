@@ -1,9 +1,7 @@
-import gc
 import json
 import logging
 import os
 
-import torch
 import folder_paths
 
 logger = logging.getLogger("RunningHub.VoxCPM")
@@ -19,10 +17,6 @@ folder_paths.add_model_folder_path(
     LORA_MODEL_TYPE,
     os.path.join(folder_paths.models_dir, VOXCPM_MODEL_TYPE, "loras"),
 )
-
-_cached_pipe = None
-_cached_config_hash = None
-
 
 def _list_model_dirs():
     """List VoxCPM model directories that contain config.json."""
@@ -97,21 +91,6 @@ def _resolve_lora_path(lora_name):
 
 
 def _load_pipeline(model_name, optimize, lora_name="None"):
-    global _cached_pipe, _cached_config_hash
-    config_hash = hash((model_name, optimize, lora_name))
-
-    if _cached_pipe is not None and config_hash == _cached_config_hash:
-        logger.info("Reusing cached VoxCPM pipeline (model=%s, optimize=%s, lora=%s)", model_name, optimize, lora_name)
-        return _cached_pipe
-
-    if _cached_pipe is not None:
-        logger.info("Config changed, releasing old pipeline")
-        del _cached_pipe
-        _cached_pipe = None
-        _cached_config_hash = None
-        gc.collect()
-        torch.cuda.empty_cache()
-
     from voxcpm import VoxCPM
 
     model_path = _resolve_model_path(model_name)
@@ -138,9 +117,6 @@ def _load_pipeline(model_name, optimize, lora_name="None"):
         "architecture": arch,
         "model_path": model_path,
     }
-
-    _cached_pipe = model_info
-    _cached_config_hash = config_hash
     return model_info
 
 

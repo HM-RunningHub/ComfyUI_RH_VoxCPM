@@ -94,7 +94,13 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 从 [`examples/`](examples/) 目录下载示例工作流并导入 ComfyUI：
 
 1. **[基础工作流](examples/VoxCPM2%20基础工作流.json)** — 单人语音生成，支持声音设计 / 克隆
-2. **[多人工作流](examples/VoxCPM2%20多人工作流.json)** — 多说话人对话生成，每位说话人可独立控制声音
+2. **[多人工作流](examples/VoxCPM2%20多人工作流.json)** — 固定 5 人版本的多说话人对话生成，每位说话人可独立控制声音
+
+说明：
+
+- `RunningHub VoxCPM Multi-Speaker` 是固定 5 人输入版本
+- `RunningHub VoxCPM Multi-Speaker (Dynamic Audio)` 是动态音频输入版本，脚本格式相同，但参考音频输入会自动增长
+- 如果插件更新后没有看到动态输入效果，请刷新 ComfyUI 前端页面或重新打开工作流
 
 ### 三种模式
 
@@ -147,6 +153,29 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 | seed | INT | 随机种子 |
 | audio_1 ~ audio_5 | AUDIO | 各说话人的参考音频（可选） |
 | control_1 ~ control_5 | STRING | 各说话人的声音描述（可选） |
+| normalize_text | BOOLEAN | 文本规范化（默认：关） |
+| denoise_reference | BOOLEAN | 通过 ZipEnhancer 对参考音频降噪（默认：关） |
+| max_len | INT | 生成时最大 token 长度（默认：4096） |
+| retry_badcase | BOOLEAN | 输出质量差时自动重试（默认：开） |
+
+### RunningHub VoxCPM Multi-Speaker (Dynamic Audio)（多人语音，动态参考音频）
+
+适用于多说话人参考音频场景。脚本仍然使用 `[spk1]...[spk2]...` 标签；控制指令合并为一个多行文本输入，同样用标签区分不同说话人。节点默认显示 2 个参考音频输入；当当前输入全部接满时，会自动新增下一个输入，不设上限。执行时会按槽位编号把 `audio_1` 映射到 `spk1`、`audio_2` 映射到 `spk2`，依此类推，因此也支持 `spk10`、`spk20` 这类标签。
+
+使用提示：
+
+- 先接满当前可见的 `audio_*` 输入，节点才会自动长出下一个输入
+- 这个“自动增长”依赖前端扩展脚本；更新插件后若行为未变化，请刷新页面
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| model | VOXCPM_MODEL | 来自 Load Model 节点的模型 |
+| script | STRING | 带标签的脚本，如 `[spk1]你好[spk2]你好啊` |
+| speaker_controls | STRING | 多行控制文本，如 `[spk1]四川话\n[spk2]成年女性，东北话` |
+| cfg_value | FLOAT | 引导强度（默认：2.0） |
+| inference_steps | INT | LocDiT 流匹配步数（默认：10） |
+| seed | INT | 随机种子 |
+| audio_1 ~ audio_N | AUDIO | 动态参考音频输入，按槽位顺序映射到 `spk1 ~ spkN`；默认显示 2 个，接满后自动增加，无上限 |
 | normalize_text | BOOLEAN | 文本规范化（默认：关） |
 | denoise_reference | BOOLEAN | 通过 ZipEnhancer 对参考音频降噪（默认：关） |
 | max_len | INT | 生成时最大 token 长度（默认：4096） |

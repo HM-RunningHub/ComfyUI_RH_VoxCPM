@@ -94,7 +94,13 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 Download example workflows from the [`examples/`](examples/) directory and import into ComfyUI:
 
 1. **[Basic Workflow](examples/VoxCPM2%20基础工作流.json)** — Single-speaker speech generation with voice design / cloning
-2. **[Multi-Speaker Workflow](examples/VoxCPM2%20多人工作流.json)** — Multi-speaker dialogue generation with per-speaker voice control
+2. **[Multi-Speaker Workflow](examples/VoxCPM2%20多人工作流.json)** — Fixed 5-speaker multi-speaker dialogue generation with per-speaker voice control
+
+Notes:
+
+- `RunningHub VoxCPM Multi-Speaker` is the fixed 5-speaker version
+- `RunningHub VoxCPM Multi-Speaker (Dynamic Audio)` uses the same script format but grows reference-audio inputs automatically
+- If the dynamic inputs do not appear after updating the plugin, refresh the ComfyUI frontend page or reopen the workflow
 
 ### Three Modes
 
@@ -147,6 +153,29 @@ Generate multi-speaker dialogue from a tagged script. Supports up to 5 speakers 
 | seed | INT | Random seed for reproducibility |
 | audio_1 ~ audio_5 | AUDIO | Reference audio for each speaker (optional) |
 | control_1 ~ control_5 | STRING | Voice description for each speaker (optional) |
+| normalize_text | BOOLEAN | Text normalization (default: off) |
+| denoise_reference | BOOLEAN | Denoise reference audio via ZipEnhancer (default: off) |
+| max_len | INT | Maximum token length during generation (default: 4096) |
+| retry_badcase | BOOLEAN | Auto-retry when output quality is poor (default: on) |
+
+### RunningHub VoxCPM Multi-Speaker (Dynamic Audio)
+
+For multi-speaker reference-audio workflows. The script still uses `[spk1]...[spk2]...` tags, while speaker control instructions are merged into a single multiline input using the same tag format. The node shows 2 reference-audio inputs by default and automatically adds the next one when all current inputs are connected, with no fixed upper limit. At execution time, `audio_1` maps to `spk1`, `audio_2` maps to `spk2`, and so on, so tags like `spk10` and `spk20` are supported as well.
+
+Usage tips:
+
+- You need to connect all currently visible `audio_*` inputs before the next one is added
+- This auto-growth behavior depends on the frontend extension script; if it does not update after installing a new version, refresh the page
+
+| Input | Type | Description |
+|-------|------|-------------|
+| model | VOXCPM_MODEL | Model from Load Model node |
+| script | STRING | Tagged script, e.g. `[spk1]Hello[spk2]Hi there` |
+| speaker_controls | STRING | Multiline tagged controls, e.g. `[spk1]Sichuan accent\n[spk2]Adult female, northeastern accent` |
+| cfg_value | FLOAT | Guidance scale (default: 2.0) |
+| inference_steps | INT | LocDiT flow-matching steps (default: 10) |
+| seed | INT | Random seed for reproducibility |
+| audio_1 ~ audio_N | AUDIO | Dynamic reference-audio inputs mapped to `spk1 ~ spkN` by slot order; starts with 2, auto-grows when filled, and has no fixed upper limit |
 | normalize_text | BOOLEAN | Text normalization (default: off) |
 | denoise_reference | BOOLEAN | Denoise reference audio via ZipEnhancer (default: off) |
 | max_len | INT | Maximum token length during generation (default: 4096) |

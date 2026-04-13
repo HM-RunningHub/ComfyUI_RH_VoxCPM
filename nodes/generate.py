@@ -30,15 +30,7 @@ folder_paths.add_model_folder_path(
 VOXCPM_MODEL_TYPE = "voxcpm"
 ZIPENHANCER_DIR_NAME = "speech_zipenhancer_ans_multiloss_16k_base"
 
-_asr_model = None
-_denoiser = None
-
-
 def _get_asr_model():
-    global _asr_model
-    if _asr_model is not None:
-        return _asr_model
-
     from funasr import AutoModel
 
     base_dirs = folder_paths.get_folder_paths(SENSEVOICE_MODEL_TYPE)
@@ -56,12 +48,11 @@ def _get_asr_model():
         )
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    _asr_model = AutoModel(
+    return AutoModel(
         model=model_path,
         disable_update=True,
         device=device,
     )
-    return _asr_model
 
 
 def _recognize_audio(wav_path):
@@ -72,10 +63,6 @@ def _recognize_audio(wav_path):
 
 
 def _get_denoiser():
-    global _denoiser
-    if _denoiser is not None:
-        return _denoiser
-
     from voxcpm.zipenhancer import ZipEnhancer
 
     base_dirs = folder_paths.get_folder_paths(VOXCPM_MODEL_TYPE)
@@ -94,8 +81,7 @@ def _get_denoiser():
             f"and place it at: {expected}"
         )
 
-    _denoiser = ZipEnhancer(model_path)
-    return _denoiser
+    return ZipEnhancer(model_path)
 
 
 def _denoise_audio(input_path):
