@@ -15,6 +15,7 @@ import contextlib
 import json
 import logging
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -24,7 +25,7 @@ import torchaudio
 import folder_paths
 import comfy.utils
 
-from .generate import _safe_save_wav
+from .generate import _recognize_audio, _safe_save_wav
 
 logger = logging.getLogger("RunningHub.VoxCPM.Train")
 
@@ -82,6 +83,32 @@ def _get_lora_dir() -> str:
     )
     os.makedirs(target, exist_ok=True)
     return target
+
+
+def _zip_checkpoint_to_output(source_dir: Path, zip_name: str) -> Optional[Path]:
+    """Zip ``source_dir`` into ComfyUI's ``output/`` root as ``<zip_name>.zip``.
+
+    RunningHub appears to clean up sub-directories under ``output/`` created by
+    a workflow once it finishes, so we emit a flat ``.zip`` at the output root
+    (which is left alone) for easy download via the ComfyUI web UI.
+
+    Returns the produced zip path, or ``None`` on failure (never raises).
+    """
+    import shutil
+
+    try:
+        out_root = Path(folder_paths.get_output_directory())
+        out_root.mkdir(parents=True, exist_ok=True)
+        safe_zip_name = zip_name.strip().replace(" ", "_") or "voxcpm_lora"
+        # shutil.make_archive appends the correct suffix on its own.
+        base_path = out_root / safe_zip_name
+        archive = shutil.make_archive(
+            str(base_path), "zip", root_dir=str(source_dir)
+        )
+        return Path(archive)
+    except Exception as e:
+        logger.warning("Failed to zip training output to ComfyUI output dir: %s", e)
+        return None
 
 
 def _detect_sample_rate(pretrained_path: str) -> Optional[int]:
@@ -181,8 +208,32 @@ def _audio_dict_to_wav(audio_dict: dict, target_sr: int) -> "torch.Tensor":
 # Dataset nodes
 # --------------------------------------------------------------------------- #
 
+def _asr_audio_dict(audio_dict: dict) -> str:
+    """Run funasr SenseVoiceSmall on a ComfyUI AUDIO dict, return the text.
+
+    The reference audio is resampled to 16kHz mono and written to a temp
+    WAV, then handed to :func:`generate._recognize_audio`. The caller is
+    responsible for raising if the result is empty.
+    """
+    wav = _audio_dict_to_wav(audio_dict, 16000)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    tmp.close()
+    try:
+        _safe_save_wav(tmp.name, wav.unsqueeze(0), 16000)
+        return (_recognize_audio(tmp.name) or "").strip()
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
 class RunningHubVoxCPMDatasetEntry:
     """Create a single (audio, text) training entry to feed into Dataset Build.
+
+    If ``text`` is left blank, the node runs funasr SenseVoiceSmall on
+    ``audio`` to obtain the transcript automatically — useful when batching
+    a folder of clips without pre-written labels.
 
     Optionally attach a ``ref_audio`` sample that VoxCPM's training pipeline
     will use as the reference utterance for voice-style conditioning (upstream
@@ -194,28 +245,48 @@ class RunningHubVoxCPMDatasetEntry:
         return {
             "required": {
                 "audio": ("AUDIO",),
-                "text": ("STRING", {"default": "", "multiline": True}),
             },
             "optional": {
+                "text": ("STRING", {"default": "", "multiline": True}),
                 "dataset_id": ("INT", {"default": 0, "min": 0, "max": 1024, "step": 1}),
                 "ref_audio": ("AUDIO",),
             },
             "optional_inputs": {},
         }
 
-    RETURN_TYPES = ("VOXCPM_DATA_ENTRY",)
-    RETURN_NAMES = ("entry",)
+    RETURN_TYPES = ("VOXCPM_DATA_ENTRY", "STRING")
+    RETURN_NAMES = ("entry", "text")
     FUNCTION = "build"
     CATEGORY = "RunningHub/VoxCPM/Train"
 
-    def build(self, audio, text, dataset_id=0, ref_audio=None):
+    # Minimum characters for an ASR result to be considered usable. Anything
+    # shorter (e.g. ``그.``, ``.``) almost certainly means SenseVoiceSmall
+    # failed to transcribe the clip and we must not silently feed the
+    # training loop garbage.
+    _MIN_ASR_TEXT_LEN = 2
+
+    def build(self, audio, text="", dataset_id=0, ref_audio=None):
         text = (text or "").strip()
         if not text:
-            raise ValueError("Dataset entry text must not be empty.")
+            logger.info("Dataset entry text is empty, running funasr ASR on audio...")
+            text = _asr_audio_dict(audio)
+            logger.info("ASR transcript: %s", text[:120] + ("..." if len(text) > 120 else ""))
+            if not text:
+                raise ValueError(
+                    "Dataset entry text was empty and automatic ASR returned no "
+                    "transcript. Please provide the text manually."
+                )
+            if len(text) < self._MIN_ASR_TEXT_LEN:
+                raise ValueError(
+                    f"Automatic ASR returned a suspiciously short transcript "
+                    f"({text!r}). This usually means the clip is silent, the "
+                    f"language is not supported, or the SenseVoiceSmall model "
+                    f"is missing. Please provide the text manually."
+                )
         entry = {"audio": audio, "text": text, "dataset_id": int(dataset_id)}
         if ref_audio is not None:
             entry["ref_audio"] = ref_audio
-        return (entry,)
+        return (entry, text)
 
 
 class RunningHubVoxCPMDatasetBuild:
@@ -229,9 +300,9 @@ class RunningHubVoxCPMDatasetBuild:
     def INPUT_TYPES(cls):
         required = {
             "entry_1": ("VOXCPM_DATA_ENTRY",),
-            "entry_2": ("VOXCPM_DATA_ENTRY",),
         }
         optional = {
+            "entry_2": ("VOXCPM_DATA_ENTRY",),
             "entry_3": ("VOXCPM_DATA_ENTRY",),
             "entry_4": ("VOXCPM_DATA_ENTRY",),
             "entry_5": ("VOXCPM_DATA_ENTRY",),
@@ -254,12 +325,12 @@ class RunningHubVoxCPMDatasetBuild:
     FUNCTION = "build"
     CATEGORY = "RunningHub/VoxCPM/Train"
 
-    def build(self, entry_1, entry_2, **kwargs):
+    def build(self, entry_1, **kwargs):
         sample_rate = int(kwargs.get("sample_rate", 16000))
         dataset_name = (kwargs.get("dataset_name") or "voxcpm_dataset").strip()
 
-        entries: List[dict] = [entry_1, entry_2]
-        for i in range(3, 9):
+        entries: List[dict] = [entry_1]
+        for i in range(2, 9):
             e = kwargs.get(f"entry_{i}")
             if e is not None:
                 entries.append(e)
@@ -423,7 +494,60 @@ def _run_training(
     pipeline.
 
     Returns the path to the final checkpoint folder.
+
+    .. note::
+        ComfyUI wraps the entire prompt execution with
+        ``torch.inference_mode()``, which silently turns every tensor created
+        inside the workflow into an "inference tensor". Those tensors never
+        participate in autograd — forward still runs and the loss value looks
+        correct, but ``grad_fn`` stays ``None`` and ``backward`` fails with
+        ``element 0 of tensors does not require grad and does not have a
+        grad_fn``. We must therefore explicitly disable inference_mode and
+        re-enable grad for the whole training loop, otherwise loss.backward()
+        raises that misleading error (observed on RunningHub, 2026-04).
     """
+    with torch.inference_mode(False), torch.enable_grad():
+        return _run_training_inner(
+            pretrained_path=pretrained_path,
+            train_manifest=train_manifest,
+            val_manifest=val_manifest,
+            num_iters=num_iters,
+            batch_size=batch_size,
+            grad_accum_steps=grad_accum_steps,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            warmup_steps=warmup_steps,
+            max_grad_norm=max_grad_norm,
+            num_workers=num_workers,
+            log_interval=log_interval,
+            save_interval=save_interval,
+            save_path=save_path,
+            lora_enable=lora_enable,
+            lora_cfg=lora_cfg,
+            pbar=pbar,
+        )
+
+
+def _run_training_inner(
+    *,
+    pretrained_path: str,
+    train_manifest: str,
+    val_manifest: str,
+    num_iters: int,
+    batch_size: int,
+    grad_accum_steps: int,
+    learning_rate: float,
+    weight_decay: float,
+    warmup_steps: int,
+    max_grad_norm: float,
+    num_workers: int,
+    log_interval: int,
+    save_interval: int,
+    save_path: str,
+    lora_enable: bool,
+    lora_cfg: Optional[object],
+    pbar: "comfy.utils.ProgressBar",
+) -> Path:
     _ensure_voxcpm_src_importable()
 
     from voxcpm.model import VoxCPMModel, VoxCPM2Model
@@ -502,6 +626,12 @@ def _run_training(
     tracker.print(
         f"Trainable parameters: {num_trainable:,} (LoRA={lora_enable}, arch={arch})"
     )
+    if num_trainable == 0:
+        raise RuntimeError(
+            "No trainable parameters were found. "
+            "When training in LoRA mode make sure at least one of "
+            "enable_lm / enable_dit / enable_proj is True and lora_rank > 0."
+        )
 
     optimizer = AdamW(
         trainable_params, lr=float(learning_rate), weight_decay=float(weight_decay)
@@ -563,6 +693,20 @@ def _run_training(
                     if k.startswith("loss/"):
                         total_loss = total_loss + v * lambdas.get(k, 1.0) / grad_accum_steps
                         loss_dict[k] = v.detach()
+
+                if (
+                    not isinstance(total_loss, torch.Tensor)
+                    or not total_loss.requires_grad
+                    or total_loss.grad_fn is None
+                ):
+                    raise RuntimeError(
+                        "Training step produced a loss with no autograd graph. "
+                        "Common causes: (1) the batch has no valid loss tokens "
+                        "(e.g. text too short compared to audio, or manifest text "
+                        "is empty/ASR-failed); (2) LoRA adapters are disabled or "
+                        "lora_rank=0; (3) the model was loaded under no_grad. "
+                        f"loss={total_loss!r}, outputs_keys={list(outputs.keys())}"
+                    )
 
                 accelerator.backward(total_loss)
 
@@ -662,6 +806,7 @@ class RunningHubVoxCPMTrainLoRA:
                 "enable_dit": ("BOOLEAN", {"default": True}),
                 "enable_proj": ("BOOLEAN", {"default": False}),
                 "copy_to_loras_dir": ("BOOLEAN", {"default": True}),
+                "zip_to_output": ("BOOLEAN", {"default": True}),
             },
         }
 
@@ -693,6 +838,7 @@ class RunningHubVoxCPMTrainLoRA:
         enable_dit=True,
         enable_proj=False,
         copy_to_loras_dir=True,
+        zip_to_output=True,
     ):
         _ensure_voxcpm_src_importable()
         train_manifest = (train_manifest or "").strip()
@@ -757,15 +903,26 @@ class RunningHubVoxCPMTrainLoRA:
             except Exception as e:
                 logger.warning("Failed to copy LoRA to models/voxcpm/loras: %s", e)
 
-        info = (
-            f"LoRA training complete.\n"
-            f"  base model : {model_name} ({arch})\n"
-            f"  iterations : {num_iters}\n"
-            f"  batch size : {batch_size} x grad_accum {grad_accum_steps}\n"
-            f"  lr         : {learning_rate}\n"
-            f"  rank/alpha : {lora_rank}/{lora_alpha}\n"
-            f"  output dir : {final_path}"
-        )
+        zip_path: Optional[Path] = None
+        if zip_to_output:
+            zip_path = _zip_checkpoint_to_output(
+                Path(final_path), f"{safe_name}_{ts}"
+            )
+            if zip_path is not None:
+                logger.info("Wrote LoRA zip to %s", zip_path)
+
+        info_lines = [
+            "LoRA training complete.",
+            f"  base model : {model_name} ({arch})",
+            f"  iterations : {num_iters}",
+            f"  batch size : {batch_size} x grad_accum {grad_accum_steps}",
+            f"  lr         : {learning_rate}",
+            f"  rank/alpha : {lora_rank}/{lora_alpha}",
+            f"  output dir : {final_path}",
+        ]
+        if zip_path is not None:
+            info_lines.append(f"  output zip : {zip_path}")
+        info = "\n".join(info_lines)
         logger.info(info)
         return (str(final_path), info)
 
@@ -798,6 +955,7 @@ class RunningHubVoxCPMTrainFull:
                 "num_workers": ("INT", {"default": 2, "min": 0, "max": 16, "step": 1}),
                 "log_interval": ("INT", {"default": 10, "min": 1, "max": 10000, "step": 1}),
                 "save_interval": ("INT", {"default": 0, "min": 0, "max": 100000, "step": 1}),
+                "zip_to_output": ("BOOLEAN", {"default": True}),
             },
         }
 
@@ -822,6 +980,7 @@ class RunningHubVoxCPMTrainFull:
         num_workers=2,
         log_interval=10,
         save_interval=0,
+        zip_to_output=True,
     ):
         _ensure_voxcpm_src_importable()
         train_manifest = (train_manifest or "").strip()
@@ -862,13 +1021,24 @@ class RunningHubVoxCPMTrainFull:
             pbar=pbar,
         )
 
-        info = (
-            f"Full fine-tune complete.\n"
-            f"  base model : {model_name} ({arch})\n"
-            f"  iterations : {num_iters}\n"
-            f"  batch size : {batch_size} x grad_accum {grad_accum_steps}\n"
-            f"  lr         : {learning_rate}\n"
-            f"  output dir : {last_folder}"
-        )
+        zip_path: Optional[Path] = None
+        if zip_to_output:
+            zip_path = _zip_checkpoint_to_output(
+                Path(last_folder), f"{safe_name}_{ts}"
+            )
+            if zip_path is not None:
+                logger.info("Wrote full-finetune zip to %s", zip_path)
+
+        info_lines = [
+            "Full fine-tune complete.",
+            f"  base model : {model_name} ({arch})",
+            f"  iterations : {num_iters}",
+            f"  batch size : {batch_size} x grad_accum {grad_accum_steps}",
+            f"  lr         : {learning_rate}",
+            f"  output dir : {last_folder}",
+        ]
+        if zip_path is not None:
+            info_lines.append(f"  output zip : {zip_path}")
+        info = "\n".join(info_lines)
         logger.info(info)
         return (str(last_folder), info)

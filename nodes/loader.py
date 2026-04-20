@@ -55,7 +55,11 @@ def _list_lora_files():
                 continue
             full = os.path.join(base, name)
             is_weight_file = os.path.isfile(full) and name.endswith((".pth", ".ckpt", ".safetensors"))
-            is_weight_dir = os.path.isdir(full) and os.path.isfile(os.path.join(full, "lora_weights.ckpt"))
+            is_weight_dir = os.path.isdir(full) and (
+                os.path.isfile(os.path.join(full, "lora_weights.ckpt"))
+                or os.path.isfile(os.path.join(full, "lora_weights.safetensors"))
+                or os.path.isfile(os.path.join(full, "lora_weights.pth"))
+            )
             if is_weight_file or is_weight_dir:
                 seen.add(name)
                 results.append(name)

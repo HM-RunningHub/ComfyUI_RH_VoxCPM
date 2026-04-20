@@ -199,9 +199,11 @@ Typical workflow:
 | Input | Type | Description |
 |-------|------|-------------|
 | audio | AUDIO | Training clip |
-| text | STRING | Transcript for the clip |
+| text | STRING | Optional transcript for the clip. If left blank, funasr SenseVoiceSmall is used to auto-transcribe `audio` |
 | dataset_id | INT | Optional dataset id for multi-dataset training (default: 0) |
 | ref_audio | AUDIO | Optional voice-style reference audio. When provided it is written to the manifest as `ref_audio` and used by the training pipeline for voice conditioning (requires voxcpm built after 2026-04) |
+
+Returns `entry` (feed into Dataset Build) and `text` (the transcript actually used, handy for preview/reuse). Auto-ASR requires the SenseVoiceSmall model under `models/SenseVoice/SenseVoiceSmall`.
 
 ### RunningHub VoxCPM Dataset Build
 

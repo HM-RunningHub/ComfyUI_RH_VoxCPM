@@ -199,9 +199,11 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | audio | AUDIO | 单条训练音频 |
-| text | STRING | 对应的文本转写 |
+| text | STRING | 可选：对应的文本转写。留空时会自动用 funasr SenseVoiceSmall 对 `audio` 进行识别得到转写 |
 | dataset_id | INT | 可选：多数据集训练时的数据集编号（默认 0） |
 | ref_audio | AUDIO | 可选：声音风格参考音频；填入后会被写入 manifest 的 `ref_audio` 字段，训练时用于条件输入（要求 voxcpm ≥ 2026-04 构建） |
+
+返回两项：`entry`（给 Dataset Build 使用）、`text`（最终使用的文本，方便后续预览或复用）。使用自动 ASR 需要准备 `models/SenseVoice/SenseVoiceSmall` 模型目录。
 
 ### RunningHub VoxCPM Dataset Build（构建训练清单）
 

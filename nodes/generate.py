@@ -84,10 +84,30 @@ def _get_asr_model():
 
 
 def _recognize_audio(wav_path):
-    """Run ASR on audio file, return recognized text."""
+    """Run ASR on audio file, return recognized text.
+
+    The SenseVoiceSmall model is loaded fresh for every call and released
+    immediately afterwards (including a CUDA cache flush) so ASR never leaves
+    ~1-2 GB of VRAM pinned between unrelated workflow steps.
+    """
+    import gc
+
     asr = _get_asr_model()
-    res = asr.generate(input=wav_path, language="auto", use_itn=True)
-    return res[0]["text"].split("|>")[-1]
+    try:
+        res = asr.generate(input=wav_path, language="auto", use_itn=True)
+        return res[0]["text"].split("|>")[-1]
+    finally:
+        try:
+            del asr
+        except Exception:
+            pass
+        gc.collect()
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
 
 
 def _get_denoiser():
