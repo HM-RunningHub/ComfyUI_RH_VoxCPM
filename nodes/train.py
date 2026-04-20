@@ -85,27 +85,60 @@ def _get_lora_dir() -> str:
     return target
 
 
-def _zip_checkpoint_to_output(source_dir: Path, zip_name: str) -> Optional[Path]:
-    """Zip ``source_dir`` into ComfyUI's ``output/`` root as ``<zip_name>.zip``.
+def _zip_checkpoint_to_output(source_dir: Path, zip_name: str) -> Optional[dict]:
+    """Zip ``source_dir`` under ComfyUI's ``output/`` for download.
 
-    RunningHub appears to clean up sub-directories under ``output/`` created by
-    a workflow once it finishes, so we emit a flat ``.zip`` at the output root
-    (which is left alone) for easy download via the ComfyUI web UI.
+    Follows the RH onboarding convention (`glut-shared-rh-onboard`, §8
+    "Output Node Standardization"): the destination path is resolved via
+    :func:`folder_paths.get_save_image_path`, which handles:
 
-    Returns the produced zip path, or ``None`` on failure (never raises).
+    * Anti-traversal of ``output/``
+    * Automatic ``_00001_`` style counter suffix so concurrent training
+      tasks don't overwrite each other
+    * RunningHub-side filename rewriting (the caller should surface the
+      resulting ``filename``/``subfolder`` pair so downstream nodes and
+      the web UI can locate the artifact)
+
+    The archive is written to ``output/voxcpm_train/<zip_name>_NNNNN_.zip``
+    (i.e. the ``voxcpm_train`` subfolder is kept isolated from plain image
+    outputs). On failure the function never raises; it just returns ``None``.
+
+    Returns
+    -------
+    dict or None
+        ``{"zip_path": Path, "filename": str, "subfolder": str}`` on
+        success, ``None`` otherwise.
     """
     import shutil
 
     try:
-        out_root = Path(folder_paths.get_output_directory())
-        out_root.mkdir(parents=True, exist_ok=True)
-        safe_zip_name = zip_name.strip().replace(" ", "_") or "voxcpm_lora"
-        # shutil.make_archive appends the correct suffix on its own.
-        base_path = out_root / safe_zip_name
-        archive = shutil.make_archive(
-            str(base_path), "zip", root_dir=str(source_dir)
+        safe_prefix = zip_name.strip().replace(" ", "_") or "voxcpm_lora"
+        # RH convention: treat zip like an image output so RunningHub's
+        # filename/subfolder rewriter can reach it. The subfolder is
+        # deliberately scoped to the plugin so we never pollute the root
+        # of `output/` alongside generated images.
+        prefix_with_subfolder = f"voxcpm_train/{safe_prefix}"
+
+        full_output_folder, filename, counter, subfolder, _ = (
+            folder_paths.get_save_image_path(
+                prefix_with_subfolder,
+                folder_paths.get_output_directory(),
+            )
         )
-        return Path(archive)
+        os.makedirs(full_output_folder, exist_ok=True)
+
+        archive_basename = f"{filename}_{counter:05d}_"
+        archive_base_path = os.path.join(full_output_folder, archive_basename)
+        archive = shutil.make_archive(
+            archive_base_path, "zip", root_dir=str(source_dir)
+        )
+
+        final_filename = os.path.basename(archive)
+        return {
+            "zip_path": Path(archive),
+            "filename": final_filename,
+            "subfolder": subfolder,
+        }
     except Exception as e:
         logger.warning("Failed to zip training output to ComfyUI output dir: %s", e)
         return None
@@ -814,6 +847,10 @@ class RunningHubVoxCPMTrainLoRA:
     RETURN_NAMES = ("lora_path", "info")
     FUNCTION = "train"
     CATEGORY = "RunningHub/VoxCPM/Train"
+    OUTPUT_NODE = True
+
+    def __init__(self):
+        self.type = "output"
 
     def train(
         self,
@@ -903,13 +940,13 @@ class RunningHubVoxCPMTrainLoRA:
             except Exception as e:
                 logger.warning("Failed to copy LoRA to models/voxcpm/loras: %s", e)
 
-        zip_path: Optional[Path] = None
+        zip_info: Optional[dict] = None
         if zip_to_output:
-            zip_path = _zip_checkpoint_to_output(
+            zip_info = _zip_checkpoint_to_output(
                 Path(final_path), f"{safe_name}_{ts}"
             )
-            if zip_path is not None:
-                logger.info("Wrote LoRA zip to %s", zip_path)
+            if zip_info is not None:
+                logger.info("Wrote LoRA zip to %s", zip_info["zip_path"])
 
         info_lines = [
             "LoRA training complete.",
@@ -920,11 +957,27 @@ class RunningHubVoxCPMTrainLoRA:
             f"  rank/alpha : {lora_rank}/{lora_alpha}",
             f"  output dir : {final_path}",
         ]
-        if zip_path is not None:
-            info_lines.append(f"  output zip : {zip_path}")
+        if zip_info is not None:
+            info_lines.append(f"  output zip : {zip_info['zip_path']}")
         info = "\n".join(info_lines)
         logger.info(info)
-        return (str(final_path), info)
+
+        ui_payload = {}
+        if zip_info is not None:
+            # Surface the zip under a dedicated ``voxcpm_lora`` UI key rather
+            # than ``images`` so the RunningHub web UI can pick it up for
+            # download while avoiding any "is this an image?" confusion.
+            ui_payload = {
+                "voxcpm_lora": [
+                    {
+                        "filename": zip_info["filename"],
+                        "subfolder": zip_info["subfolder"],
+                        "type": "output",
+                    }
+                ]
+            }
+
+        return {"ui": ui_payload, "result": (str(final_path), info)}
 
 
 class RunningHubVoxCPMTrainFull:
@@ -963,6 +1016,10 @@ class RunningHubVoxCPMTrainFull:
     RETURN_NAMES = ("checkpoint_path", "info")
     FUNCTION = "train"
     CATEGORY = "RunningHub/VoxCPM/Train"
+    OUTPUT_NODE = True
+
+    def __init__(self):
+        self.type = "output"
 
     def train(
         self,
@@ -1021,13 +1078,13 @@ class RunningHubVoxCPMTrainFull:
             pbar=pbar,
         )
 
-        zip_path: Optional[Path] = None
+        zip_info: Optional[dict] = None
         if zip_to_output:
-            zip_path = _zip_checkpoint_to_output(
+            zip_info = _zip_checkpoint_to_output(
                 Path(last_folder), f"{safe_name}_{ts}"
             )
-            if zip_path is not None:
-                logger.info("Wrote full-finetune zip to %s", zip_path)
+            if zip_info is not None:
+                logger.info("Wrote full-finetune zip to %s", zip_info["zip_path"])
 
         info_lines = [
             "Full fine-tune complete.",
@@ -1037,8 +1094,21 @@ class RunningHubVoxCPMTrainFull:
             f"  lr         : {learning_rate}",
             f"  output dir : {last_folder}",
         ]
-        if zip_path is not None:
-            info_lines.append(f"  output zip : {zip_path}")
+        if zip_info is not None:
+            info_lines.append(f"  output zip : {zip_info['zip_path']}")
         info = "\n".join(info_lines)
         logger.info(info)
-        return (str(last_folder), info)
+
+        ui_payload = {}
+        if zip_info is not None:
+            ui_payload = {
+                "voxcpm_full": [
+                    {
+                        "filename": zip_info["filename"],
+                        "subfolder": zip_info["subfolder"],
+                        "type": "output",
+                    }
+                ]
+            }
+
+        return {"ui": ui_payload, "result": (str(last_folder), info)}
