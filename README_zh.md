@@ -16,6 +16,7 @@ GitHub 仓库地址：[HM-RunningHub/ComfyUI_RH_VoxCPM](https://github.com/HM-Ru
 - **可控克隆**：上传参考音频克隆音色，同时可用文字指令控制风格
 - **极致克隆**：以音频续写方式复刻每一个声音细节（仅 VoxCPM2 支持）
 - **LoRA 微调**：加载自定义 LoRA 权重，实现个性化语音生成
+- **LoRA/全量训练**：直接在 ComfyUI 工作流中训练 VoxCPM LoRA 或全量微调（复用原项目的训练循环）
 - **自动 ASR**：参考音频文本为空时，自动通过 FunASR SenseVoiceSmall 识别
 - **参考音频降噪**：可选 ZipEnhancer 对参考音频进行降噪处理
 
@@ -97,6 +98,7 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 
 1. **[基础工作流](examples/VoxCPM2%20基础工作流.json)** — 单人语音生成，支持声音设计 / 克隆
 2. **[多人工作流](examples/VoxCPM2%20多人工作流.json)** — 固定 5 人版本的多说话人对话生成，每位说话人可独立控制声音
+3. **[LoRA 训练工作流](examples/VoxCPM2%20LoRA%20训练工作流.json)** — 从两段音频构建迷你数据集并执行 LoRA 微调
 
 说明：
 
@@ -182,6 +184,68 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 | denoise_reference | BOOLEAN | 通过 ZipEnhancer 对参考音频降噪（默认：关） |
 | max_len | INT | 生成时最大 token 长度（默认：4096） |
 | retry_badcase | BOOLEAN | 输出质量差时自动重试（默认：开） |
+
+## 🎓 训练节点（LoRA / 全量微调）
+
+> ⚠️ 训练节点依赖 VoxCPM 原项目的训练代码（`voxcpm.training.*`）。安装插件时会随 `requirements.txt` 自动拉取 `transformers / datasets / safetensors / argbind` 等依赖；另需在 `ComfyUI/custom_nodes/VoxCPM/src/` 或插件目录下 `voxcpm/src/` 放一份 [VoxCPM](https://github.com/OpenBMB/VoxCPM) 源码（包含 `voxcpm/training/`）。
+
+训练流程通常分三步：
+1. 用 **Dataset Entry** 把单条（音频 + 文本）包装成训练样本；
+2. 用 **Dataset Build** 把若干样本聚合为 `train.jsonl` 训练清单；也可以直接提供已有的 jsonl 文件路径；
+3. 用 **Train LoRA** 或 **Train Full** 执行训练，产物默认写入 `ComfyUI/output/voxcpm_train/<name>_<timestamp>/`。启用 `copy_to_loras_dir` 后 LoRA 会自动拷贝到 `ComfyUI/models/voxcpm/loras/`，刷新页面即可在 Load Model 节点里直接选用。
+
+### RunningHub VoxCPM Dataset Entry（构造训练样本）
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| audio | AUDIO | 单条训练音频 |
+| text | STRING | 对应的文本转写 |
+| dataset_id | INT | 可选：多数据集训练时的数据集编号（默认 0） |
+| ref_audio | AUDIO | 可选：声音风格参考音频；填入后会被写入 manifest 的 `ref_audio` 字段，训练时用于条件输入（要求 voxcpm ≥ 2026-04 构建） |
+
+### RunningHub VoxCPM Dataset Build（构建训练清单）
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| entry_1, entry_2 | VOXCPM_DATA_ENTRY | 至少 2 条样本 |
+| entry_3 ~ entry_8 | VOXCPM_DATA_ENTRY | 更多样本（可选） |
+| extra_manifest | STRING | 已有 jsonl 清单路径，将被追加到末尾（可选） |
+| sample_rate | INT | 写入 wav 的采样率，建议与模型 AudioVAE 一致（默认 16000） |
+| dataset_name | STRING | 输出目录名前缀 |
+
+输出：`manifest_path` 指向生成的 `train.jsonl`，`num_samples` 为样本总数。
+
+### RunningHub VoxCPM Train LoRA（LoRA 微调）
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| model_name | COMBO | 基底模型目录（`models/voxcpm/` 下） |
+| train_manifest | STRING | 训练清单 jsonl 路径（可用 Dataset Build 的输出） |
+| output_name | STRING | 输出名前缀，最终目录带时间戳 |
+| num_iters | INT | 训练总步数（默认 500） |
+| batch_size | INT | 单步 batch 大小（默认 1） |
+| grad_accum_steps | INT | 梯度累积步数（默认 1） |
+| learning_rate | FLOAT | 学习率（默认 1e-4） |
+| lora_rank | INT | LoRA 秩（默认 32） |
+| lora_alpha | INT | LoRA alpha（默认 32） |
+| val_manifest | STRING | 验证集清单（可选） |
+| warmup_steps | INT | warmup 步数（默认 100） |
+| weight_decay | FLOAT | 权重衰减（默认 0.01） |
+| max_grad_norm | FLOAT | 梯度裁剪上限，0 关闭（默认 1.0） |
+| num_workers | INT | 数据加载线程数（默认 2） |
+| log_interval | INT | 日志打印间隔步数（默认 10） |
+| save_interval | INT | 检查点保存间隔步数；0 表示只在结束时保存（默认 0） |
+| lora_dropout | FLOAT | LoRA dropout（默认 0.0） |
+| enable_lm | BOOLEAN | 对语言模型部分启用 LoRA（默认 开） |
+| enable_dit | BOOLEAN | 对 DiT 部分启用 LoRA（默认 开） |
+| enable_proj | BOOLEAN | 对投影层启用 LoRA（默认 关） |
+| copy_to_loras_dir | BOOLEAN | 训练结束自动拷贝到 `models/voxcpm/loras/`（默认 开） |
+
+输出：`lora_path`（LoRA 权重目录，含 `lora_weights.safetensors` + `lora_config.json`）、`info`（训练摘要）。
+
+### RunningHub VoxCPM Train Full（全量微调）
+
+参数与 Train LoRA 类似，但不含 LoRA 相关项。⚠️ 全量微调显存/存储开销极大，建议仅在确有必要时使用；日常声音适配请优先使用 LoRA。
 
 ## 📄 许可证
 

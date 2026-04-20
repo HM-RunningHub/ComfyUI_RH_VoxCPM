@@ -10,7 +10,12 @@ import torchaudio
 import folder_paths
 import comfy.utils
 
-from .generate import _recognize_audio, _denoise_audio, _safe_save_wav
+from .generate import (
+    _recognize_audio,
+    _denoise_audio,
+    _safe_save_wav,
+    _sanitize_control,
+)
 
 logger = logging.getLogger("RunningHub.VoxCPM")
 
@@ -141,11 +146,13 @@ def _parse_speaker_controls(text, max_speakers=None):
     for spk_idx, segment_text in _parse_script(control_text, max_speakers=max_speakers):
         controls.setdefault(spk_idx, []).append(segment_text)
 
-    return {
-        spk_idx: "\n".join(parts).strip()
-        for spk_idx, parts in controls.items()
-        if any(part.strip() for part in parts)
-    }
+    cleaned = {}
+    for spk_idx, parts in controls.items():
+        joined = "\n".join(parts).strip()
+        sanitized = _sanitize_control(joined)
+        if sanitized:
+            cleaned[spk_idx] = sanitized
+    return cleaned
 
 
 class _DynamicAudioOptionalInputs(dict):
@@ -250,7 +257,9 @@ class RunningHubVoxCPMMultiSpeaker:
         speaker_controls = {}
         for i in range(1, NUM_SPEAKERS + 1):
             speaker_audios[i] = kwargs.get(f"audio_{i}")
-            speaker_controls[i] = (kwargs.get(f"control_{i}") or "").strip()
+            speaker_controls[i] = _sanitize_control(
+                (kwargs.get(f"control_{i}") or "").strip()
+            )
 
         # Group segments by speaker: {spk_idx: [(original_index, text), ...]}
         spk_groups = {}
@@ -292,29 +301,20 @@ class RunningHubVoxCPMMultiSpeaker:
                 logger.info("Generating spk%d: %d segments, combined %d chars",
                             spk_idx, len(group), len(combined_text))
 
+                final_text = f"({control}){combined_text}" if has_control else combined_text
+                generate_kwargs = {
+                    "text": final_text,
+                    "cfg_value": float(cfg_value),
+                    "inference_timesteps": int(inference_steps),
+                    "normalize": normalize_text,
+                    "denoise": False,
+                    "max_len": int(max_len),
+                    "retry_badcase": retry_badcase,
+                }
                 if has_control:
-                    final_text = f"({control}){combined_text}"
-                    generate_kwargs = {
-                        "text": final_text,
-                        "cfg_value": float(cfg_value),
-                        "inference_timesteps": int(inference_steps),
-                        "normalize": normalize_text,
-                        "denoise": False,
-                        "max_len": int(max_len),
-                        "retry_badcase": retry_badcase,
-                    }
                     if ref_wav_path is not None and is_v2:
                         generate_kwargs["reference_wav_path"] = ref_wav_path
                 else:
-                    generate_kwargs = {
-                        "text": combined_text,
-                        "cfg_value": float(cfg_value),
-                        "inference_timesteps": int(inference_steps),
-                        "normalize": normalize_text,
-                        "denoise": False,
-                        "max_len": int(max_len),
-                        "retry_badcase": retry_badcase,
-                    }
                     if ref_wav_path is not None:
                         if is_v2:
                             if spk_idx not in spk_asr_cache:
@@ -337,6 +337,9 @@ class RunningHubVoxCPMMultiSpeaker:
                 pbar.update_absolute(step_counter, total_steps)
 
                 wav_np = voxcpm_model.generate(**generate_kwargs)
+                if not isinstance(wav_np, np.ndarray):
+                    wav_np = np.asarray(wav_np, dtype=np.float32)
+                wav_np = wav_np.astype(np.float32, copy=False).reshape(-1)
 
                 step_counter += int(inference_steps) + 1
                 pbar.update_absolute(step_counter, total_steps)
@@ -525,8 +528,9 @@ class RunningHubVoxCPMMultiSpeakerListReference:
                     has_control,
                 )
 
+                final_text = f"({control}){combined_text}" if has_control else combined_text
                 generate_kwargs = {
-                    "text": combined_text,
+                    "text": final_text,
                     "cfg_value": cfg_value,
                     "inference_timesteps": inference_steps,
                     "normalize": normalize_text,
@@ -536,7 +540,6 @@ class RunningHubVoxCPMMultiSpeakerListReference:
                 }
 
                 if has_control:
-                    generate_kwargs["text"] = f"({control}){combined_text}"
                     if ref_wav_path is not None and is_v2:
                         generate_kwargs["reference_wav_path"] = ref_wav_path
                 elif ref_wav_path is not None:
@@ -561,6 +564,9 @@ class RunningHubVoxCPMMultiSpeakerListReference:
                 pbar.update_absolute(step_counter, total_steps)
 
                 wav_np = voxcpm_model.generate(**generate_kwargs)
+                if not isinstance(wav_np, np.ndarray):
+                    wav_np = np.asarray(wav_np, dtype=np.float32)
+                wav_np = wav_np.astype(np.float32, copy=False).reshape(-1)
 
                 step_counter += inference_steps + 1
                 pbar.update_absolute(step_counter, total_steps)

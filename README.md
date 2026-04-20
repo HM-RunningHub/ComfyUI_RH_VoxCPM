@@ -16,6 +16,7 @@ GitHub Repository: [HM-RunningHub/ComfyUI_RH_VoxCPM](https://github.com/HM-Runni
 - **Controllable Cloning**: Clone a voice with optional style guidance via reference audio
 - **Ultimate Cloning**: Reproduce every vocal nuance through audio continuation (VoxCPM2 only)
 - **LoRA Fine-tuning**: Load custom LoRA weights for personalized voice generation
+- **LoRA / Full Training**: Train VoxCPM LoRA (or full fine-tune) directly from a ComfyUI workflow, reusing the upstream training loop
 - **Auto ASR**: Automatically recognize reference audio text via FunASR SenseVoiceSmall when `reference_audio_text` is empty
 - **Reference Denoising**: Optional ZipEnhancer denoising for reference audio before cloning
 
@@ -97,6 +98,7 @@ Download example workflows from the [`examples/`](examples/) directory and impor
 
 1. **[Basic Workflow](examples/VoxCPM2%20基础工作流.json)** — Single-speaker speech generation with voice design / cloning
 2. **[Multi-Speaker Workflow](examples/VoxCPM2%20多人工作流.json)** — Fixed 5-speaker multi-speaker dialogue generation with per-speaker voice control
+3. **[LoRA Training Workflow](examples/VoxCPM2%20LoRA%20训练工作流.json)** — Build a tiny dataset from two audio clips and run a LoRA fine-tune
 
 Notes:
 
@@ -182,6 +184,68 @@ Usage tips:
 | denoise_reference | BOOLEAN | Denoise reference audio via ZipEnhancer (default: off) |
 | max_len | INT | Maximum token length during generation (default: 4096) |
 | retry_badcase | BOOLEAN | Auto-retry when output quality is poor (default: on) |
+
+## 🎓 Training Nodes (LoRA / Full Fine-tuning)
+
+> ⚠️ The training nodes rely on the upstream training modules (`voxcpm.training.*`). They pull `transformers / datasets / safetensors / argbind` via `requirements.txt`, and require a full [VoxCPM](https://github.com/OpenBMB/VoxCPM) source tree to be available — either install the full repo, or drop a checkout next to this plugin (e.g. `ComfyUI/custom_nodes/VoxCPM/src/voxcpm/training/`) or inside `<plugin>/voxcpm/src/`.
+
+Typical workflow:
+1. **Dataset Entry** wraps a single (audio, text) pair into a training sample.
+2. **Dataset Build** aggregates samples into a `train.jsonl` manifest (an existing jsonl path also works).
+3. **Train LoRA** / **Train Full** runs the training loop. Artifacts are written to `ComfyUI/output/voxcpm_train/<name>_<timestamp>/`; with `copy_to_loras_dir` enabled LoRA weights are also copied to `ComfyUI/models/voxcpm/loras/` so the Load Model node picks them up after a frontend refresh.
+
+### RunningHub VoxCPM Dataset Entry
+
+| Input | Type | Description |
+|-------|------|-------------|
+| audio | AUDIO | Training clip |
+| text | STRING | Transcript for the clip |
+| dataset_id | INT | Optional dataset id for multi-dataset training (default: 0) |
+| ref_audio | AUDIO | Optional voice-style reference audio. When provided it is written to the manifest as `ref_audio` and used by the training pipeline for voice conditioning (requires voxcpm built after 2026-04) |
+
+### RunningHub VoxCPM Dataset Build
+
+| Input | Type | Description |
+|-------|------|-------------|
+| entry_1, entry_2 | VOXCPM_DATA_ENTRY | At least two samples |
+| entry_3 ~ entry_8 | VOXCPM_DATA_ENTRY | Additional samples (optional) |
+| extra_manifest | STRING | Path to an existing jsonl to append (optional) |
+| sample_rate | INT | Sample rate to save WAVs at; match the base model AudioVAE (default: 16000) |
+| dataset_name | STRING | Output directory prefix |
+
+Outputs `manifest_path` (path to `train.jsonl`) and `num_samples`.
+
+### RunningHub VoxCPM Train LoRA
+
+| Input | Type | Description |
+|-------|------|-------------|
+| model_name | COMBO | Base model directory under `models/voxcpm/` |
+| train_manifest | STRING | Training manifest (jsonl) path (use Dataset Build output) |
+| output_name | STRING | Output name prefix (the final folder is suffixed with a timestamp) |
+| num_iters | INT | Total training steps (default: 500) |
+| batch_size | INT | Per-step batch size (default: 1) |
+| grad_accum_steps | INT | Gradient accumulation steps (default: 1) |
+| learning_rate | FLOAT | Learning rate (default: 1e-4) |
+| lora_rank | INT | LoRA rank (default: 32) |
+| lora_alpha | INT | LoRA alpha (default: 32) |
+| val_manifest | STRING | Optional validation manifest |
+| warmup_steps | INT | Warmup steps (default: 100) |
+| weight_decay | FLOAT | Weight decay (default: 0.01) |
+| max_grad_norm | FLOAT | Gradient clipping; 0 = disabled (default: 1.0) |
+| num_workers | INT | Data loader workers (default: 2) |
+| log_interval | INT | Log interval in steps (default: 10) |
+| save_interval | INT | Checkpoint interval; 0 = save only at the end (default: 0) |
+| lora_dropout | FLOAT | LoRA dropout (default: 0.0) |
+| enable_lm | BOOLEAN | Apply LoRA to the LM (default: on) |
+| enable_dit | BOOLEAN | Apply LoRA to the DiT (default: on) |
+| enable_proj | BOOLEAN | Apply LoRA to projection layers (default: off) |
+| copy_to_loras_dir | BOOLEAN | Copy final LoRA to `models/voxcpm/loras/` (default: on) |
+
+Outputs `lora_path` (folder containing `lora_weights.safetensors` + `lora_config.json`) and `info` (summary string).
+
+### RunningHub VoxCPM Train Full
+
+Mirrors the LoRA node without LoRA-specific inputs. ⚠️ Full fine-tuning is memory-heavy; prefer the LoRA node for voice adaptation.
 
 ## 📄 License
 

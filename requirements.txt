@@ -9,3 +9,8 @@ addict
 simplejson
 sortedcontainers
 pydantic
+# Training dependencies (only used by the Train LoRA / Train Full nodes)
+transformers
+datasets
+safetensors
+argbind

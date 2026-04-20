@@ -2,6 +2,7 @@ import logging
 import os
 import tempfile
 
+import numpy as np
 import torch
 import torchaudio
 import soundfile as sf
@@ -9,6 +10,33 @@ import folder_paths
 import comfy.utils
 
 logger = logging.getLogger("RunningHub.VoxCPM")
+
+
+_CONTROL_PAREN_TRANS = str.maketrans({
+    "(": "",
+    ")": "",
+    "（": "",
+    "）": "",
+})
+
+
+def _sanitize_control(text):
+    """Strip parentheses from a voice-design control instruction.
+
+    VoxCPM expects the format ``(description)text``. If ``description`` itself
+    contains ``(`` / ``)`` (or the full-width equivalents ``（`` / ``）``),
+    the resulting prompt has unbalanced parentheses such as
+    ``(INTP (逻辑学家)：26岁女性...)文本``. The model then treats part of the
+    description as text and reads it aloud.
+
+    We remove only the bracket characters and keep their inner content, so the
+    description still reads naturally.
+    """
+    if not text:
+        return ""
+    cleaned = text.translate(_CONTROL_PAREN_TRANS)
+    # Collapse runs of whitespace introduced by the removal.
+    return " ".join(cleaned.split()).strip()
 
 
 def _safe_save_wav(path, waveform, sample_rate):
@@ -177,7 +205,7 @@ class RunningHubVoxCPMGenerate:
         if not text:
             raise ValueError("Target text must not be empty.")
 
-        control = (control_instruction or "").strip()
+        control = _sanitize_control((control_instruction or "").strip())
 
         # ultimate_clone=ON  → 极致克隆：用 prompt_text 做音频续写，control_instruction 被忽略
         # ultimate_clone=OFF → 声音设计 / 可控克隆：control_instruction 拼入文本
@@ -186,10 +214,7 @@ class RunningHubVoxCPMGenerate:
             final_text = text
         else:
             ref_text = None
-            if control:
-                final_text = f"({control}){text}"
-            else:
-                final_text = text
+            final_text = f"({control}){text}" if control else text
 
         ref_wav_path = None
         temp_files = []
@@ -249,6 +274,9 @@ class RunningHubVoxCPMGenerate:
             pbar.update(1)
 
             wav_np = voxcpm_model.generate(**generate_kwargs)
+            if not isinstance(wav_np, np.ndarray):
+                wav_np = np.asarray(wav_np, dtype=np.float32)
+            wav_np = wav_np.astype(np.float32, copy=False).reshape(-1)
             pbar.update_absolute(total_steps - 1, total_steps)
 
             wav_tensor = torch.from_numpy(wav_np).float().unsqueeze(0).unsqueeze(0)
