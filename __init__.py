@@ -8,7 +8,7 @@ from .nodes.train import (
     RunningHubVoxCPMDatasetEntry,
     RunningHubVoxCPMDatasetBuild,
     RunningHubVoxCPMTrainLoRA,
-    RunningHubVoxCPMTrainFull,
+    # RunningHubVoxCPMTrainFull,
 )
 
 WEB_DIRECTORY = "./js"
@@ -21,7 +21,7 @@ NODE_CLASS_MAPPINGS = {
     "RunningHub_VoxCPM_DatasetEntry": RunningHubVoxCPMDatasetEntry,
     "RunningHub_VoxCPM_DatasetBuild": RunningHubVoxCPMDatasetBuild,
     "RunningHub_VoxCPM_TrainLoRA": RunningHubVoxCPMTrainLoRA,
-    "RunningHub_VoxCPM_TrainFull": RunningHubVoxCPMTrainFull,
+    # "RunningHub_VoxCPM_TrainFull": RunningHubVoxCPMTrainFull,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -32,7 +32,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "RunningHub_VoxCPM_DatasetEntry": "RunningHub VoxCPM Dataset Entry",
     "RunningHub_VoxCPM_DatasetBuild": "RunningHub VoxCPM Dataset Build",
     "RunningHub_VoxCPM_TrainLoRA": "RunningHub VoxCPM Train LoRA",
-    "RunningHub_VoxCPM_TrainFull": "RunningHub VoxCPM Train Full",
+    # "RunningHub_VoxCPM_TrainFull": "RunningHub VoxCPM Train Full",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
