@@ -813,7 +813,7 @@ class RunningHubVoxCPMTrainLoRA:
             "required": {
                 "model_name": (_list_model_dirs(),),
                 "train_manifest": ("STRING", {"default": "", "multiline": False}),
-                "output_name": ("STRING", {"default": "my_voxcpm_lora"}),
+                "output_name": ("STRING", {"default": "VoxCPM2_lora"}),
                 "num_iters": ("INT", {"default": 500, "min": 1, "max": 200000, "step": 1}),
                 "batch_size": ("INT", {"default": 1, "min": 1, "max": 64, "step": 1}),
                 "grad_accum_steps": ("INT", {"default": 1, "min": 1, "max": 64, "step": 1}),
@@ -930,20 +930,42 @@ class RunningHubVoxCPMTrainLoRA:
             import shutil
 
             loras_root = Path(_get_lora_dir())
-            target = loras_root / f"{safe_name}_{ts}"
+            src_safetensors = Path(last_folder) / "lora_weights.safetensors"
+            src_ckpt = Path(last_folder) / "lora_weights.ckpt"
+            flat_name = f"{safe_name}_{ts}.safetensors"
+            target_file = loras_root / flat_name
             try:
-                if target.exists():
-                    shutil.rmtree(target)
-                shutil.copytree(last_folder, target)
-                final_path = target
-                logger.info("Copied LoRA weights to %s", target)
+                loras_root.mkdir(parents=True, exist_ok=True)
+                if src_safetensors.is_file():
+                    src = src_safetensors
+                elif src_ckpt.is_file():
+                    src = src_ckpt
+                    target_file = loras_root / f"{safe_name}_{ts}.ckpt"
+                else:
+                    src = None
+                    logger.warning(
+                        "Could not find lora_weights.{safetensors,ckpt} under %s; "
+                        "skipping copy to models/voxcpm/loras",
+                        last_folder,
+                    )
+
+                if src is not None:
+                    if target_file.exists():
+                        target_file.unlink()
+                    shutil.copy2(src, target_file)
+                    final_path = target_file
+                    logger.info(
+                        "Copied LoRA weights to %s (renamed from %s)",
+                        target_file,
+                        src.name,
+                    )
             except Exception as e:
                 logger.warning("Failed to copy LoRA to models/voxcpm/loras: %s", e)
 
         zip_info: Optional[dict] = None
         if zip_to_output:
             zip_info = _zip_checkpoint_to_output(
-                Path(final_path), f"{safe_name}_{ts}"
+                Path(last_folder), f"{safe_name}_{ts}"
             )
             if zip_info is not None:
                 logger.info("Wrote LoRA zip to %s", zip_info["zip_path"])
@@ -989,7 +1011,7 @@ class RunningHubVoxCPMTrainFull:
             "required": {
                 "model_name": (_list_model_dirs(),),
                 "train_manifest": ("STRING", {"default": "", "multiline": False}),
-                "output_name": ("STRING", {"default": "my_voxcpm_full"}),
+                "output_name": ("STRING", {"default": "VoxCPM2_full"}),
                 "num_iters": ("INT", {"default": 500, "min": 1, "max": 200000, "step": 1}),
                 "batch_size": ("INT", {"default": 1, "min": 1, "max": 64, "step": 1}),
                 "grad_accum_steps": ("INT", {"default": 4, "min": 1, "max": 64, "step": 1}),

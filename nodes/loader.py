@@ -80,7 +80,12 @@ def _resolve_model_path(model_name):
 
 
 def _resolve_lora_path(lora_name):
-    """Resolve LoRA name to full path. Returns None if 'None'."""
+    """Resolve LoRA name to full path. Returns None if 'None' or file missing.
+
+    Missing LoRA files only trigger a warning instead of raising, so workflows
+    that reference a LoRA name which is not present on the current machine can
+    still execute (falling back to the base model without LoRA).
+    """
     if not lora_name or lora_name == "None":
         return None
     base_dirs = folder_paths.get_folder_paths(LORA_MODEL_TYPE)
@@ -88,10 +93,12 @@ def _resolve_lora_path(lora_name):
         full = os.path.join(base, lora_name)
         if os.path.isfile(full) or os.path.isdir(full):
             return full
-    raise FileNotFoundError(
-        f"VoxCPM LoRA '{lora_name}' not found. "
-        f"Please place LoRA weights under: models/voxcpm/loras/"
+    logger.warning(
+        "VoxCPM LoRA '%s' not found under %s; loading without LoRA.",
+        lora_name,
+        base_dirs,
     )
+    return None
 
 
 def _load_pipeline(model_name, optimize, lora_name="None"):
@@ -141,6 +148,14 @@ class RunningHubVoxCPMLoadModel:
     RETURN_NAMES = ("model",)
     FUNCTION = "load_model"
     CATEGORY = "RunningHub/VoxCPM"
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, lora_name="None", **_kwargs):
+        # Only declare lora_name so ComfyUI skips its enum validation for it
+        # (model_name keeps the default validation). Workflows may reference a
+        # LoRA file that is missing on this machine; we warn at load time and
+        # fall back to no-LoRA instead of blocking submission.
+        return True
 
     def load_model(self, model_name, optimize, lora_name="None"):
         model_info = _load_pipeline(model_name, optimize, lora_name)
