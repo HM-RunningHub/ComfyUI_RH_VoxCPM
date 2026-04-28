@@ -25,7 +25,7 @@ import torchaudio
 import folder_paths
 import comfy.utils
 
-from .generate import _recognize_audio, _safe_save_wav
+from .generate import _denoise_audio, _recognize_audio, _safe_save_wav
 
 logger = logging.getLogger("RunningHub.VoxCPM.Train")
 
@@ -168,6 +168,103 @@ def _detect_out_sample_rate(pretrained_path: str) -> int:
         return int(cfg.get("audio_vae_config", {}).get("out_sample_rate") or 0)
     except Exception:
         return 0
+
+
+def _preflight_manifest(
+    manifest_path: str,
+    expected_sample_rate: Optional[int] = None,
+    max_samples: int = 16,
+) -> None:
+    """Lightweight pre-flight check on a training manifest.
+
+    Mirrors the shape of upstream's ``voxcpm validate`` CLI (commit
+    ``4457617``), but stays optional and only raises on hard failures
+    (missing manifest, all-broken audio paths). Soft issues (rate
+    mismatch, very-short clips) are surfaced as warnings so the user
+    can decide whether to abort.
+
+    Parameters
+    ----------
+    manifest_path
+        Path to the JSONL manifest produced by Dataset Build / Build (Batch).
+    expected_sample_rate
+        If set, warn when sampled records have a stored audio file whose
+        sample rate differs from this value. ``None`` skips the check.
+    max_samples
+        Cap on records to inspect (file IO can be slow on large manifests).
+    """
+    if not manifest_path or not os.path.isfile(manifest_path):
+        raise FileNotFoundError(
+            f"train_manifest '{manifest_path}' not found. "
+            "Build one with the 'VoxCPM Dataset Build' / 'Dataset Build (Batch)' "
+            "node, or pass an existing jsonl path."
+        )
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            lines = [ln.strip() for ln in f.readlines() if ln.strip()]
+    except Exception as e:
+        raise RuntimeError(f"Failed to read manifest {manifest_path}: {e}") from e
+
+    if not lines:
+        raise RuntimeError(f"train_manifest '{manifest_path}' is empty.")
+
+    try:
+        import soundfile as sf
+        have_sf = True
+    except ImportError:
+        have_sf = False
+
+    valid = 0
+    short_clips = 0
+    rate_mismatches = 0
+    sample_count = min(len(lines), int(max_samples))
+    for raw in lines[:sample_count]:
+        try:
+            rec = json.loads(raw)
+        except json.JSONDecodeError as e:
+            logger.warning("manifest line is not valid JSON: %s", e)
+            continue
+        text = (rec.get("text") or "").strip()
+        audio = rec.get("audio") or ""
+        if not text:
+            logger.warning("manifest record missing 'text': %s", audio)
+            continue
+        if not audio or not os.path.isfile(audio):
+            logger.warning("manifest record audio not found: %s", audio)
+            continue
+        valid += 1
+        if have_sf:
+            try:
+                info = sf.info(audio)
+                duration = float(info.duration or 0.0)
+                if duration < 0.3:
+                    short_clips += 1
+                if expected_sample_rate is not None and int(info.samplerate) != int(expected_sample_rate):
+                    rate_mismatches += 1
+            except Exception:
+                continue
+    if valid == 0:
+        raise RuntimeError(
+            f"manifest pre-flight failed: 0 valid records out of {sample_count} "
+            f"sampled in '{manifest_path}'. Check audio paths and 'text' fields."
+        )
+    if short_clips:
+        logger.warning(
+            "manifest pre-flight: %d/%d sampled clips are < 0.3s; "
+            "consider filtering them out before training.",
+            short_clips, sample_count,
+        )
+    if rate_mismatches:
+        logger.warning(
+            "manifest pre-flight: %d/%d sampled clips have sample_rate != %d; "
+            "training will auto-resample, but this slows data loading.",
+            rate_mismatches, sample_count, expected_sample_rate,
+        )
+    logger.info(
+        "manifest pre-flight OK: %d total records, %d/%d sampled valid.",
+        len(lines), valid, sample_count,
+    )
 
 
 def _detect_architecture(pretrained_path: str) -> str:
@@ -416,6 +513,271 @@ class RunningHubVoxCPMDatasetBuild:
         return (str(manifest_path), num)
 
 
+class RunningHubVoxCPMDatasetBuildBatch:
+    """Build a VoxCPM training manifest directly from a **list** of AUDIO inputs.
+
+    Designed to chain after batch audio loaders (e.g. ``HAIGC_LoadImagesFromZip``
+    from ``Comfyui-HAIGC-Zip``), so the user can do:
+
+        加载zip文件 (audios list) → VoxCPM Dataset Build (Batch) → Train LoRA
+
+    Pipeline per clip:
+      1. (optional) ZipEnhancer denoise — keep voice, suppress background music
+         and ambient noise. This is the same model used by
+         ``denoise_reference`` in the Generate / Multi-Speaker nodes.
+      2. (optional) SenseVoiceSmall ASR — auto-transcribe the cleaned clip.
+         If ``texts`` are provided as a parallel list, ASR is skipped for
+         entries that already have a non-empty text.
+      3. Resample to ``sample_rate`` and dump to
+         ``output/voxcpm_train/<dataset_name>_<ts>/wavs/sample_NNNNN.wav``;
+         append a JSONL record to ``train.jsonl``.
+
+    Empty / silent / ASR-failed clips are skipped (with a warning) so a single
+    bad sample doesn't abort the whole batch.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "audios": ("AUDIO",),
+            },
+            "optional": {
+                "texts": ("STRING", {"default": "", "forceInput": True}),
+                "denoise": ("BOOLEAN", {"default": True}),
+                "auto_asr": ("BOOLEAN", {"default": True}),
+                "sample_rate": ("INT", {
+                    "default": 16000,
+                    "min": 8000,
+                    "max": 48000,
+                    "step": 1000,
+                }),
+                "dataset_id": ("INT", {"default": 0, "min": 0, "max": 1024, "step": 1}),
+                "dataset_name": ("STRING", {"default": "voxcpm_dataset"}),
+                "min_duration": ("FLOAT", {
+                    "default": 0.5,
+                    "min": 0.0,
+                    "max": 60.0,
+                    "step": 0.1,
+                }),
+                "max_duration": ("FLOAT", {
+                    "default": 30.0,
+                    "min": 1.0,
+                    "max": 300.0,
+                    "step": 1.0,
+                }),
+                "extra_manifest": ("STRING", {"default": "", "multiline": False}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "INT", "STRING")
+    RETURN_NAMES = ("manifest_path", "num_samples", "transcripts")
+    FUNCTION = "build"
+    CATEGORY = "RunningHub/VoxCPM/Train"
+    INPUT_IS_LIST = True
+
+    _MIN_ASR_TEXT_LEN = 2
+
+    @staticmethod
+    def _scalar(v, default=None):
+        """Unwrap the leading ComfyUI list value for scalar widget params."""
+        if isinstance(v, (list, tuple)):
+            return v[0] if v else default
+        return v if v is not None else default
+
+    def build(
+        self,
+        audios,
+        texts=None,
+        denoise=True,
+        auto_asr=True,
+        sample_rate=16000,
+        dataset_id=0,
+        dataset_name="voxcpm_dataset",
+        min_duration=0.5,
+        max_duration=30.0,
+        extra_manifest="",
+    ):
+        if not isinstance(audios, (list, tuple)):
+            audios = [audios]
+        audios = [a for a in audios if isinstance(a, dict) and "waveform" in a]
+        if not audios:
+            raise ValueError(
+                "Dataset Build (Batch) received no audio. Connect the AUDIO "
+                "output from a batch loader such as 'HAIGC_LoadImagesFromZip'."
+            )
+
+        denoise = bool(self._scalar(denoise, True))
+        auto_asr = bool(self._scalar(auto_asr, True))
+        sample_rate = int(self._scalar(sample_rate, 16000))
+        dataset_id = int(self._scalar(dataset_id, 0))
+        dataset_name = (self._scalar(dataset_name, "voxcpm_dataset") or "voxcpm_dataset").strip()
+        min_duration = float(self._scalar(min_duration, 0.5))
+        max_duration = float(self._scalar(max_duration, 30.0))
+        extra_manifest_path = (self._scalar(extra_manifest, "") or "").strip()
+
+        # `texts` is a parallel list (one transcript per audio). If user wires
+        # nothing, it arrives as None / [None] / [""] — treat all as missing.
+        if texts is None:
+            text_list: List[str] = []
+        elif isinstance(texts, (list, tuple)):
+            text_list = [str(t) if t is not None else "" for t in texts]
+        else:
+            text_list = [str(texts)]
+
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        out_root = Path(_get_output_root()) / f"{dataset_name}_{ts}"
+        wav_dir = out_root / "wavs"
+        wav_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = out_root / "train.jsonl"
+
+        total = len(audios)
+        pbar = comfy.utils.ProgressBar(total)
+        transcripts: List[str] = []
+        num = 0
+        skipped = 0
+
+        with manifest_path.open("w", encoding="utf-8") as mf:
+            for idx, audio in enumerate(audios):
+                try:
+                    wav = _audio_dict_to_wav(audio, sample_rate)
+                    duration = float(wav.shape[-1]) / float(sample_rate)
+                    if duration < min_duration:
+                        logger.warning(
+                            "[batch %d/%d] clip too short (%.2fs < %.2fs), skipped",
+                            idx + 1, total, duration, min_duration,
+                        )
+                        skipped += 1
+                        transcripts.append("")
+                        continue
+                    if max_duration > 0 and duration > max_duration:
+                        # Hard-trim to max_duration to avoid OOM during training.
+                        new_len = int(max_duration * sample_rate)
+                        wav = wav[:new_len]
+                        duration = float(wav.shape[-1]) / float(sample_rate)
+
+                    wav_file = wav_dir / f"sample_{idx:05d}.wav"
+                    _safe_save_wav(str(wav_file), wav.unsqueeze(0), sample_rate)
+
+                    # Step 1: keep voice (denoise) — ZipEnhancer rewrites the
+                    # WAV in-place after we copy it back. We always 16k for
+                    # ZipEnhancer (it's a 16k model); if dataset sr differs
+                    # we re-resample after enhancing.
+                    if denoise:
+                        try:
+                            denoised_path = _denoise_audio(str(wav_file))
+                            try:
+                                d_wave, d_sr = torchaudio.load(denoised_path)
+                                if d_sr != sample_rate:
+                                    d_wave = torchaudio.functional.resample(
+                                        d_wave, d_sr, sample_rate
+                                    )
+                                if d_wave.shape[0] > 1:
+                                    d_wave = d_wave.mean(dim=0, keepdim=True)
+                                _safe_save_wav(str(wav_file), d_wave, sample_rate)
+                                duration = float(d_wave.shape[-1]) / float(sample_rate)
+                            finally:
+                                try:
+                                    os.unlink(denoised_path)
+                                except OSError:
+                                    pass
+                        except Exception as e:
+                            logger.warning(
+                                "[batch %d/%d] denoise failed (%s); "
+                                "falling back to raw audio.",
+                                idx + 1, total, e,
+                            )
+
+                    # Step 2: text — user-provided wins; otherwise ASR.
+                    user_text = text_list[idx].strip() if idx < len(text_list) else ""
+                    if user_text:
+                        text = user_text
+                    elif auto_asr:
+                        text = (_recognize_audio(str(wav_file)) or "").strip()
+                        if len(text) < self._MIN_ASR_TEXT_LEN:
+                            logger.warning(
+                                "[batch %d/%d] ASR returned empty / too-short "
+                                "transcript (%r); skipped. "
+                                "Provide texts manually if this clip is needed.",
+                                idx + 1, total, text,
+                            )
+                            try:
+                                wav_file.unlink()
+                            except OSError:
+                                pass
+                            skipped += 1
+                            transcripts.append("")
+                            continue
+                    else:
+                        logger.warning(
+                            "[batch %d/%d] no text provided and auto_asr=False; "
+                            "skipped.",
+                            idx + 1, total,
+                        )
+                        try:
+                            wav_file.unlink()
+                        except OSError:
+                            pass
+                        skipped += 1
+                        transcripts.append("")
+                        continue
+
+                    record = {
+                        "audio": str(wav_file),
+                        "text": text,
+                        "duration": duration,
+                        "dataset_id": dataset_id,
+                    }
+                    mf.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    transcripts.append(text)
+                    num += 1
+                    logger.info(
+                        "[batch %d/%d] %s (%.2fs): %s",
+                        idx + 1, total, wav_file.name, duration,
+                        text[:80] + ("..." if len(text) > 80 else ""),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[batch %d/%d] failed to process clip: %s",
+                        idx + 1, total, e,
+                    )
+                    skipped += 1
+                    transcripts.append("")
+                finally:
+                    pbar.update_absolute(idx + 1, total)
+
+            if extra_manifest_path:
+                if not os.path.isfile(extra_manifest_path):
+                    raise FileNotFoundError(
+                        f"extra_manifest not found: {extra_manifest_path}"
+                    )
+                with open(extra_manifest_path, "r", encoding="utf-8") as ef:
+                    for line in ef:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        mf.write(line + "\n")
+                        num += 1
+
+        if num == 0:
+            raise RuntimeError(
+                f"Dataset Build (Batch) produced 0 valid samples out of "
+                f"{total} input clips (skipped={skipped}). Check that the "
+                f"audio is non-silent and ASR is available, or pass texts "
+                f"manually."
+            )
+
+        logger.info(
+            "Built batch manifest %s with %d samples (skipped %d).",
+            manifest_path, num, skipped,
+        )
+        # Human-readable transcript dump for downstream Show Text nodes.
+        transcript_blob = "\n".join(
+            f"[{i:03d}] {t}" for i, t in enumerate(transcripts) if t
+        )
+        return (str(manifest_path), num, transcript_blob)
+
+
 # --------------------------------------------------------------------------- #
 # Training nodes
 # --------------------------------------------------------------------------- #
@@ -437,7 +799,22 @@ def _build_lora_config(arch: str, *, enable_lm, enable_dit, enable_proj, r, alph
 
 
 def _save_lora_checkpoint(model, save_dir: Path, pretrained_path: str):
-    """Save LoRA weights + config to save_dir. Mirrors upstream save_checkpoint()."""
+    """Save LoRA weights + config to ``save_dir``.
+
+    Two complementary persistence channels are used so the rank/alpha
+    metadata can survive even when the user re-uploads a single file:
+
+    1. **Sidecar** ``lora_config.json`` next to the weights — the layout
+       the upstream training script and webui expect (commit ``19b6bf7``).
+    2. **Embedded metadata** inside ``lora_weights.safetensors`` — written
+       via the second positional argument of ``safetensors.torch.save_file``.
+       The ``safetensors`` format reserves a ``__metadata__`` field for
+       arbitrary string→string entries; we serialize ``lora_config`` as a
+       JSON blob there so a freshly-uploaded ``.safetensors`` (without
+       the JSON sidecar) still self-identifies its rank.
+
+    See ``loader._read_lora_config`` for the matching read-back logic.
+    """
     try:
         from safetensors.torch import save_file as safe_save
         has_safetensors = True
@@ -450,17 +827,32 @@ def _save_lora_checkpoint(model, save_dir: Path, pretrained_path: str):
     lora_cfg = unwrapped.lora_config
     state_dict = {k: v for k, v in full_state.items() if "lora_" in k}
 
-    if has_safetensors:
-        safe_save(state_dict, str(save_dir / "lora_weights.safetensors"))
-    else:
-        torch.save({"state_dict": state_dict}, save_dir / "lora_weights.ckpt")
-
+    cfg_dict = (
+        lora_cfg.model_dump() if hasattr(lora_cfg, "model_dump") else vars(lora_cfg)
+    )
     lora_info = {
         "base_model": str(pretrained_path) if pretrained_path else None,
-        "lora_config": (
-            lora_cfg.model_dump() if hasattr(lora_cfg, "model_dump") else vars(lora_cfg)
-        ),
+        "lora_config": cfg_dict,
     }
+    metadata = {
+        # safetensors metadata values must be plain strings.
+        "format": "voxcpm-lora",
+        "lora_config": json.dumps(cfg_dict, ensure_ascii=False),
+    }
+    if pretrained_path:
+        metadata["base_model"] = str(pretrained_path)
+
+    if has_safetensors:
+        safe_save(state_dict, str(save_dir / "lora_weights.safetensors"), metadata=metadata)
+    else:
+        # torch.save can't carry the safetensors-style metadata directly,
+        # so we wrap the rank/alpha into the pickle payload itself. The
+        # loader checks both keys.
+        torch.save(
+            {"state_dict": state_dict, "lora_config": cfg_dict},
+            save_dir / "lora_weights.ckpt",
+        )
+
     with open(save_dir / "lora_config.json", "w", encoding="utf-8") as f:
         json.dump(lora_info, f, indent=2, ensure_ascii=False)
 
@@ -879,14 +1271,16 @@ class RunningHubVoxCPMTrainLoRA:
     ):
         _ensure_voxcpm_src_importable()
         train_manifest = (train_manifest or "").strip()
-        if not train_manifest or not os.path.isfile(train_manifest):
-            raise FileNotFoundError(
-                f"train_manifest '{train_manifest}' not found. "
-                f"Build one with the 'VoxCPM Dataset Build' node or provide a jsonl path."
-            )
 
         pretrained_path = _resolve_model_path(model_name)
         arch = _detect_architecture(pretrained_path)
+        # Upstream commit 46cfce0 emphasizes that the training sample_rate
+        # MUST equal audio_vae_config.sample_rate (V2: 16k, even though the
+        # decoder outputs 48k). Pre-flight catches manifests where the
+        # baked-in wav rate disagrees, so we don't silently slow down data
+        # loading via on-the-fly resampling.
+        expected_sr = _detect_sample_rate(pretrained_path)
+        _preflight_manifest(train_manifest, expected_sample_rate=expected_sr)
         lora_cfg = _build_lora_config(
             arch,
             enable_lm=enable_lm,
@@ -1063,14 +1457,11 @@ class RunningHubVoxCPMTrainFull:
     ):
         _ensure_voxcpm_src_importable()
         train_manifest = (train_manifest or "").strip()
-        if not train_manifest or not os.path.isfile(train_manifest):
-            raise FileNotFoundError(
-                f"train_manifest '{train_manifest}' not found. "
-                f"Build one with the 'VoxCPM Dataset Build' node or provide a jsonl path."
-            )
 
         pretrained_path = _resolve_model_path(model_name)
         arch = _detect_architecture(pretrained_path)
+        expected_sr = _detect_sample_rate(pretrained_path)
+        _preflight_manifest(train_manifest, expected_sample_rate=expected_sr)
 
         ts = time.strftime("%Y%m%d_%H%M%S")
         safe_name = (output_name or "voxcpm_full").strip().replace(" ", "_")

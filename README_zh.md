@@ -99,6 +99,7 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 1. **[基础工作流](examples/VoxCPM2%20基础工作流.json)** — 单人语音生成，支持声音设计 / 克隆
 2. **[多人工作流](examples/VoxCPM2%20多人工作流.json)** — 固定 5 人版本的多说话人对话生成，每位说话人可独立控制声音
 3. **[LoRA 训练工作流](examples/VoxCPM2%20LoRA%20训练工作流.json)** — 从两段音频构建迷你数据集并执行 LoRA 微调
+4. **[LoRA Zip 批量训练工作流](examples/VoxCPM2%20LoRA%20Zip批量训练工作流.json)** — 从一个 ZIP 包批量加载音频，自动人声增强 + ASR 转写后直接喂给 LoRA 训练（依赖 `Comfyui-HAIGC-Zip` 的 `加载zip文件` 节点）
 
 说明：
 
@@ -123,6 +124,8 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 | model_name | COMBO | `models/voxcpm/` 下的模型目录 |
 | optimize | BOOLEAN | 启用 torch.compile 优化（默认：关） |
 | lora_name | COMBO | `models/voxcpm/loras/` 下的 LoRA 权重（可选，默认：None） |
+
+> 💡 **关于上传单文件 LoRA**：插件训练保存时会把 rank/alpha 等元数据**同时写到** `lora_config.json` 和 `.safetensors` 内嵌的 `__metadata__` 里。即便 UI 一次只能上传一个 `.safetensors` 文件、丢掉了 sidecar JSON，加载时也能自动识别正确的 rank。**对没有任何元数据的"裸 .safetensors"**，插件会扫描权重张量的 shape **自动反推 rank**（LoRA 因子的较小维度即 r，alpha 默认取 r），**无需手动配置**。
 
 ### RunningHub VoxCPM Generate Speech（语音生成）
 
@@ -194,6 +197,8 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 2. 用 **Dataset Build** 把若干样本聚合为 `train.jsonl` 训练清单；也可以直接提供已有的 jsonl 文件路径；
 3. 用 **Train LoRA** 或 **Train Full** 执行训练，产物默认写入 `ComfyUI/output/voxcpm_train/<name>_<timestamp>/`。启用 `copy_to_loras_dir` 后 LoRA 会自动拷贝到 `ComfyUI/models/voxcpm/loras/`，刷新页面即可在 Load Model 节点里直接选用。
 
+> 💡 **批量场景**：如果你已经有一个 ZIP 压缩包，里面装着若干段说话人音频，推荐直接用 **Dataset Build (Batch)** 替代上面的第 1、2 步——它接收一个 AUDIO 列表，自动跑 ZipEnhancer 人声增强 + SenseVoiceSmall 自动转写，输出可直接接 Train LoRA 的 `train.jsonl`。配合 `Comfyui-HAIGC-Zip` 的 `加载zip文件` 节点即可形成「ZIP → 训练」单条工作流。
+
 ### RunningHub VoxCPM Dataset Entry（构造训练样本）
 
 | 参数 | 类型 | 说明 |
@@ -216,6 +221,27 @@ modelscope download --model iic/speech_zipenhancer_ans_multiloss_16k_base --loca
 | dataset_name | STRING | 输出目录名前缀 |
 
 输出：`manifest_path` 指向生成的 `train.jsonl`，`num_samples` 为样本总数。
+
+### RunningHub VoxCPM Dataset Build (Batch)（批量构建训练清单）
+
+一步式批量数据集构建节点。直接接收 AUDIO 列表（来自 `Comfyui-HAIGC-Zip` 的 `加载zip文件`、ComfyUI 自带的批量音频加载等），按顺序对每条音频执行「人声增强 → 自动 ASR → 写入清单」，并产出可直接训练的 `train.jsonl`。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| audios | AUDIO | **批量音频列表**，节点会逐条处理 |
+| texts | STRING | 可选：与 `audios` 等长的文本列表。已填的条目跳过 ASR；未填的条目走自动 ASR |
+| denoise | BOOLEAN | 是否启用 ZipEnhancer 人声增强（去背景音、抑制噪声），默认 开 |
+| auto_asr | BOOLEAN | 文本缺失时是否自动用 SenseVoiceSmall 转写（默认 开） |
+| sample_rate | INT | 写入 wav 的采样率（默认 16000） |
+| dataset_id | INT | 多数据集训练时的 ID（默认 0） |
+| dataset_name | STRING | 输出目录名前缀（默认 `voxcpm_dataset`） |
+| min_duration | FLOAT | 短于此时长（秒）的片段会被跳过，避免无效样本（默认 0.5） |
+| max_duration | FLOAT | 超过此时长会被裁剪到 max，防止显存爆掉（默认 30） |
+| extra_manifest | STRING | 可选：追加额外的 jsonl 清单路径 |
+
+输出：`manifest_path`、`num_samples`、`transcripts`（带索引的转写汇总，方便接 ShowText 节点检查）。
+
+> ZIP 内文件名建议形如 `01.wav / 02.mp3 / 03.flac ...`；任何 `_ALLOWED_AUDIO_EXTS` 支持的格式（wav/mp3/flac/ogg/m4a/aac）都可以。降噪步骤需要预先下载 `speech_zipenhancer_ans_multiloss_16k_base`（见上方"ZipEnhancer"小节），ASR 需要 `SenseVoiceSmall`。
 
 ### RunningHub VoxCPM Train LoRA（LoRA 微调）
 

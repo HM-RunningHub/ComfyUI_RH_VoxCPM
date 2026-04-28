@@ -221,6 +221,11 @@ class RunningHubVoxCPMGenerate:
         sample_rate = model["sample_rate"]
         is_v2 = model["architecture"] == "voxcpm2"
 
+        if not isinstance(text, str):
+            raise ValueError(
+                f"Target text must be a string, got {type(text).__name__}. "
+                "Connect a STRING source (e.g. a string widget or text node)."
+            )
         text = text.strip()
         if not text:
             raise ValueError("Target text must not be empty.")

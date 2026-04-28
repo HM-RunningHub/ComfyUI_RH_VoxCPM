@@ -1,0 +1,206 @@
+{
+  "id": "8c1e2a4d-2c4f-4b3a-9c1f-7c4d9b2a01ff",
+  "revision": 0,
+  "last_node_id": 12,
+  "last_link_id": 40,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "HAIGC_LoadImagesFromZip",
+      "pos": [40, 80],
+      "size": [360, 100],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        { "name": "图像", "type": "IMAGE", "links": null },
+        { "name": "遮罩", "type": "MASK", "links": null },
+        { "name": "提示词", "type": "STRING", "links": null },
+        { "name": "视频", "type": "VIDEO", "links": null },
+        { "name": "音频", "type": "AUDIO", "links": [10] },
+        { "name": "文本", "type": "STRING", "links": null },
+        { "name": "命名信息", "type": "*", "links": null }
+      ],
+      "properties": { "Node name for S&R": "HAIGC_LoadImagesFromZip" },
+      "widgets_values": ["voxcpm_train_audios.zip"]
+    },
+    {
+      "id": 2,
+      "type": "RunningHub_VoxCPM_DatasetBuildBatch",
+      "pos": [460, 80],
+      "size": [400, 320],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        { "name": "audios", "type": "AUDIO", "link": 10 },
+        { "name": "texts", "type": "STRING", "link": null, "widget": null },
+        { "name": "denoise", "type": "BOOLEAN", "widget": {"name": "denoise"} },
+        { "name": "auto_asr", "type": "BOOLEAN", "widget": {"name": "auto_asr"} },
+        { "name": "sample_rate", "type": "INT", "widget": {"name": "sample_rate"} },
+        { "name": "dataset_id", "type": "INT", "widget": {"name": "dataset_id"} },
+        { "name": "dataset_name", "type": "STRING", "widget": {"name": "dataset_name"} },
+        { "name": "min_duration", "type": "FLOAT", "widget": {"name": "min_duration"} },
+        { "name": "max_duration", "type": "FLOAT", "widget": {"name": "max_duration"} },
+        { "name": "extra_manifest", "type": "STRING", "widget": {"name": "extra_manifest"} }
+      ],
+      "outputs": [
+        { "name": "manifest_path", "type": "STRING", "links": [20] },
+        { "name": "num_samples", "type": "INT", "links": [21] },
+        { "name": "transcripts", "type": "STRING", "links": [22] }
+      ],
+      "properties": { "Node name for S&R": "RunningHub_VoxCPM_DatasetBuildBatch" },
+      "widgets_values": [
+        false,
+        true,
+        16000,
+        0,
+        "voxcpm_dataset",
+        0.5,
+        30.0,
+        ""
+      ]
+    },
+    {
+      "id": 3,
+      "type": "RunningHub_VoxCPM_TrainLoRA",
+      "pos": [920, 80],
+      "size": [420, 480],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        { "name": "model_name", "type": "COMBO", "widget": {"name": "model_name"} },
+        { "name": "train_manifest", "type": "STRING", "link": 20, "widget": {"name": "train_manifest"} },
+        { "name": "output_name", "type": "STRING", "widget": {"name": "output_name"} },
+        { "name": "num_iters", "type": "INT", "widget": {"name": "num_iters"} },
+        { "name": "batch_size", "type": "INT", "widget": {"name": "batch_size"} },
+        { "name": "grad_accum_steps", "type": "INT", "widget": {"name": "grad_accum_steps"} },
+        { "name": "learning_rate", "type": "FLOAT", "widget": {"name": "learning_rate"} },
+        { "name": "lora_rank", "type": "INT", "widget": {"name": "lora_rank"} },
+        { "name": "lora_alpha", "type": "INT", "widget": {"name": "lora_alpha"} },
+        { "name": "val_manifest", "type": "STRING", "widget": {"name": "val_manifest"} },
+        { "name": "warmup_steps", "type": "INT", "widget": {"name": "warmup_steps"} },
+        { "name": "weight_decay", "type": "FLOAT", "widget": {"name": "weight_decay"} },
+        { "name": "max_grad_norm", "type": "FLOAT", "widget": {"name": "max_grad_norm"} },
+        { "name": "num_workers", "type": "INT", "widget": {"name": "num_workers"} },
+        { "name": "log_interval", "type": "INT", "widget": {"name": "log_interval"} },
+        { "name": "save_interval", "type": "INT", "widget": {"name": "save_interval"} },
+        { "name": "lora_dropout", "type": "FLOAT", "widget": {"name": "lora_dropout"} },
+        { "name": "enable_lm", "type": "BOOLEAN", "widget": {"name": "enable_lm"} },
+        { "name": "enable_dit", "type": "BOOLEAN", "widget": {"name": "enable_dit"} },
+        { "name": "enable_proj", "type": "BOOLEAN", "widget": {"name": "enable_proj"} },
+        { "name": "copy_to_loras_dir", "type": "BOOLEAN", "widget": {"name": "copy_to_loras_dir"} },
+        { "name": "zip_to_output", "type": "BOOLEAN", "widget": {"name": "zip_to_output"} }
+      ],
+      "outputs": [
+        { "name": "lora_path", "type": "STRING", "links": [30] },
+        { "name": "info", "type": "STRING", "links": [31] }
+      ],
+      "properties": { "Node name for S&R": "RunningHub_VoxCPM_TrainLoRA" },
+      "widgets_values": [
+        "VoxCPM2",
+        "",
+        "my_voxcpm_zip_lora",
+        1500,
+        1,
+        1,
+        0.0001,
+        32,
+        32,
+        "",
+        150,
+        0.01,
+        1.0,
+        2,
+        10,
+        0,
+        0.0,
+        true,
+        true,
+        false,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 4,
+      "type": "ShowText|pysssss",
+      "pos": [460, 440],
+      "size": [400, 200],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        { "name": "text", "type": "STRING", "link": 22 }
+      ],
+      "outputs": [],
+      "properties": { "Node name for S&R": "ShowText|pysssss" },
+      "title": "ASR 转写结果 / Transcripts",
+      "widgets_values": [""]
+    },
+    {
+      "id": 5,
+      "type": "ShowText|pysssss",
+      "pos": [1380, 80],
+      "size": [320, 240],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        { "name": "text", "type": "STRING", "link": 31 }
+      ],
+      "outputs": [],
+      "properties": { "Node name for S&R": "ShowText|pysssss" },
+      "title": "训练摘要 / Train Info",
+      "widgets_values": [""]
+    },
+    {
+      "id": 6,
+      "type": "ShowText|pysssss",
+      "pos": [1380, 360],
+      "size": [320, 120],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        { "name": "text", "type": "STRING", "link": 30 }
+      ],
+      "outputs": [],
+      "properties": { "Node name for S&R": "ShowText|pysssss" },
+      "title": "LoRA 路径 / LoRA Path",
+      "widgets_values": [""]
+    }
+  ],
+  "links": [
+    [10, 1, 4, 2, 0, "AUDIO"],
+    [20, 2, 0, 3, 1, "STRING"],
+    [22, 2, 2, 4, 0, "STRING"],
+    [30, 3, 0, 6, 0, "STRING"],
+    [31, 3, 1, 5, 0, "STRING"]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "1. 加载 ZIP 批量音频 / Load batch audio from ZIP",
+      "bounding": [20, 20, 400, 180],
+      "color": "#3f789e"
+    },
+    {
+      "id": 2,
+      "title": "2. 人声增强 + 自动 ASR + 构建 manifest",
+      "bounding": [440, 20, 440, 640],
+      "color": "#a1309b"
+    },
+    {
+      "id": 3,
+      "title": "3. LoRA 训练 / Train LoRA",
+      "bounding": [900, 20, 820, 580],
+      "color": "#8AA854"
+    }
+  ],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
